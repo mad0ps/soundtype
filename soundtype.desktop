@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SoundType
+Comment=Офлайн-диктовка голосом
+Exec=qmlscene %u qml/Main.qml
+Icon=assets/icon.svg
+Terminal=false
+X-Lomiri-Touch=true
+X-Ubuntu-Touch=true

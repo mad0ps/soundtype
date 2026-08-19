@@ -1,0 +1,35 @@
+--- a/app/qml/TerminalPage.qml
++++ b/app/qml/TerminalPage.qml
+@@ -51,6 +51,20 @@
+         }
+     }
+ 
++    // Leaving selection mode must not run inside the bottomMessage
++    // MouseArea: the SELECTION state keeps bottomMessage.active true, so
++    // resetting the state destroys the Loader item tree -- including this
++    // very MouseArea -- while its handler is still executing. Opening the
++    // popover afterwards then dereferences freed memory and aborts the
++    // process (munmap_chunk(): invalid pointer).
++    // Open the popover while the item is still alive, and defer the state
++    // change until the handler has returned.
++    function exitSelectionMode() {
++        PopupUtils.open(Qt.resolvedUrl("AlternateActionPopover.qml"),
++                        dummyForOtherActions);
++        Qt.callLater(function () { terminalPage.state = "DEFAULT"; });
++    }
++
+     function changeColor(color) {
+         var red = 1 - (color.r * 0.05)
+         var green = 1 - (color.g * 0.05)
+@@ -292,10 +306,7 @@
+                 anchors.fill: parent
+                 cursorShape: Qt.PointingHandCursor
+                 hoverEnabled: false
+-                onClicked: {
+-                  terminalPage.state = "DEFAULT";
+-                  PopupUtils.open(Qt.resolvedUrl("AlternateActionPopover.qml"));
+-                }
++                onClicked: terminalPage.exitSelectionMode()
+             }
+         }
+     }
