@@ -19,6 +19,7 @@ MainView {
     property real elapsed: 0
     property string progressText: ""
     property bool autoCopy: true
+    property real retryTs: 0
 
     function mmss(s) {
         var m = Math.floor(s / 60);
@@ -102,6 +103,17 @@ MainView {
             });
             setHandler("final", function (t, ts) {
                 root.appendText(t);
+            });
+            // Повторное распознавание записи из истории.
+            setHandler("retried", function (ts, t) {
+                root.retryTs = 0;
+                if (!t || !t.length) {
+                    toast.show("Снова ничего не распозналось");
+                    return;
+                }
+                historyPage.applyRetry(ts, t);
+                if (root.copyText(t))
+                    toast.show("Готово — новый текст в буфере");
             });
             // Расшифровка закончена: кладём текст в буфер, чтобы можно
             // было сразу вернуться в другое приложение и вставить.
@@ -328,10 +340,24 @@ MainView {
                     for (var i = 0; i < items.length; i++)
                         historyModel.append({
                             "when": items[i].when,
-                            "body": items[i].text
+                            "body": items[i].text,
+                            "ts": items[i].ts,
+                            "hasAudio": items[i].has_audio
                         });
                     historyPage.loaded = true;
                 });
+            }
+
+            // Обновляем строку на месте, чтобы не перерисовывать весь список
+            // и не терять положение прокрутки.
+            function applyRetry(ts, text) {
+                for (var i = 0; i < historyModel.count; i++) {
+                    if (Math.abs(historyModel.get(i).ts - ts) < 0.001) {
+                        if (text && text.length)
+                            historyModel.setProperty(i, "body", text);
+                        return;
+                    }
+                }
             }
 
             onVisibleChanged: if (visible) reload()
@@ -364,16 +390,17 @@ MainView {
                 model: historyModel
 
                 delegate: ListItem {
+                    id: row
                     height: entry.height + units.gu(2)
 
                     Column {
                         id: entry
                         anchors {
                             left: parent.left
-                            right: parent.right
+                            right: retryButton.visible ? retryButton.left : parent.right
                             verticalCenter: parent.verticalCenter
                             leftMargin: units.gu(2)
-                            rightMargin: units.gu(2)
+                            rightMargin: units.gu(1.5)
                         }
                         spacing: units.gu(0.5)
 
@@ -385,9 +412,40 @@ MainView {
                             elide: Text.ElideRight
                         }
                         Label {
-                            text: model.when
+                            text: model.when + (model.hasAudio ? "" : " · запись не сохранилась")
                             textSize: Label.Small
                             opacity: 0.5
+                        }
+                    }
+
+                    // Переспросить модель. Есть только у записей, для которых
+                    // ещё сохранён звук — иначе распознавать нечего.
+                    AbstractButton {
+                        id: retryButton
+                        visible: model.hasAudio
+                        enabled: !root.transcribing
+                        width: units.gu(5)
+                        height: units.gu(5)
+                        anchors {
+                            right: parent.right
+                            rightMargin: units.gu(1)
+                            verticalCenter: parent.verticalCenter
+                        }
+
+                        Icon {
+                            anchors.centerIn: parent
+                            width: units.gu(2.5)
+                            height: width
+                            name: "reload"
+                            color: theme.palette.normal.backgroundText
+                            opacity: (root.transcribing && root.retryTs === model.ts) ? 0.3
+                                   : (retryButton.enabled ? 0.8 : 0.3)
+                        }
+
+                        onClicked: {
+                            root.retryTs = model.ts;
+                            py.call("backend.retry", [model.ts]);
+                            toast.show("Распознаю заново…");
                         }
                     }
 

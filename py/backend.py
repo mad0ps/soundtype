@@ -10,6 +10,10 @@
      фразы и прогоняем через Parakeet по очереди.
   3. Готовый текст уходит в историю и сразу копируется в буфер обмена.
 
+Звук последних записей сохраняется на диск, чтобы расшифровку можно
+было переспросить, если модель ошиблась. Хранится ограниченное число
+записей, старые удаляются автоматически.
+
 Звук берём через libpulse-simple (ctypes), фразы режет silero VAD,
 распознаёт Parakeet TDT 0.6b v3 через sherpa-onnx. Всё офлайн.
 """
@@ -18,6 +22,7 @@ import json
 import os
 import sys
 import time
+import wave
 import ctypes
 import threading
 import audioop
@@ -27,6 +32,7 @@ DATA = os.path.join(HOME, '.local', 'share', 'soundtype.n0madd3v0ps')
 RUNTIME = os.path.join(DATA, 'runtime')
 MODELS = os.path.join(DATA, 'models')
 HISTORY = os.path.join(DATA, 'history.jsonl')
+AUDIO = os.path.join(DATA, 'audio')
 
 sys.path.insert(0, os.path.join(RUNTIME, 'pylibs'))
 
@@ -37,16 +43,14 @@ CHANNELS = 1
 VAD_WINDOW = 512                  # silero работает окнами по 512 отсчётов
 CHUNK_BYTES = VAD_WINDOW * 2 * 8  # читаем по 8 окон за раз
 
-# Режем запись на фразы уже после остановки, поэтому длина одной фразы
-# ограничена только удобством: слишком длинный кусок модель считает долго.
 MAX_SPEECH = 30.0
 VAD_BUFFER_SECONDS = 120
-
-# Потолок одной записи. 16 кГц float32 — это 64 КБ в секунду,
-# десять минут занимают около 38 МБ, что для телефона приемлемо.
 MAX_RECORD_SECONDS = 600
 
 HISTORY_LIMIT = 500
+# Сколько последних записей держим со звуком. Минута речи — около 2 МБ,
+# так что двадцать записей это десятки мегабайт, не больше.
+AUDIO_KEEP = 20
 
 PA_SAMPLE_S16LE = 3
 PA_STREAM_RECORD = 2
@@ -94,14 +98,61 @@ def _pulse():
     return lib
 
 
+# ---------------------------------------------------------------- звук
+
+
+def _audio_path(ts):
+    return os.path.join(AUDIO, '%d.wav' % int(ts * 1000))
+
+
+def _audio_save(ts, pcm_bytes):
+    """Кладём запись рядом с историей, чтобы её можно было переспросить."""
+    try:
+        os.makedirs(AUDIO, exist_ok=True)
+        path = _audio_path(ts)
+        with wave.open(path, 'wb') as w:
+            w.setnchannels(CHANNELS)
+            w.setsampwidth(2)
+            w.setframerate(RATE)
+            w.writeframes(pcm_bytes)
+        _audio_prune()
+        return os.path.basename(path)
+    except Exception as exc:
+        emit('error', 'Не удалось сохранить запись: %s' % exc)
+        return None
+
+
+def _audio_prune():
+    """Оставляем только последние AUDIO_KEEP записей."""
+    try:
+        files = [os.path.join(AUDIO, f) for f in os.listdir(AUDIO)
+                 if f.endswith('.wav')]
+        files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        for path in files[AUDIO_KEEP:]:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+
+def _audio_load(ts):
+    path = _audio_path(ts)
+    if not os.path.exists(path):
+        return None
+    with wave.open(path, 'rb') as w:
+        return w.readframes(w.getnframes())
+
+
 # ---------------------------------------------------------------- история
 
 
 _history_lock = threading.Lock()
 
 
-def _history_append(text):
-    rec = {'ts': time.time(), 'text': text}
+def _history_append(text, ts):
+    rec = {'ts': ts, 'text': text}
     try:
         with _history_lock:
             with open(HISTORY, 'a', encoding='utf-8') as fh:
@@ -116,28 +167,52 @@ def _history_read():
         return []
     out = []
     try:
-        with _history_lock:
-            with open(HISTORY, encoding='utf-8') as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        out.append(json.loads(line))
-                    except ValueError:
-                        continue
+        with open(HISTORY, encoding='utf-8') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue
     except Exception as exc:
         emit('error', 'Не удалось прочитать историю: %s' % exc)
         return []
     return out
 
 
+def _history_rewrite(items):
+    tmp = HISTORY + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as fh:
+        for r in items:
+            fh.write(json.dumps(r, ensure_ascii=False) + '\n')
+    os.replace(tmp, HISTORY)
+
+
+def _history_update(ts, text):
+    """Заменяем текст записи после повторного распознавания."""
+    with _history_lock:
+        items = _history_read()
+        for r in items:
+            if abs(r.get('ts', 0) - ts) < 0.001:
+                r['text'] = text
+                break
+        else:
+            return False
+        _history_rewrite(items)
+    return True
+
+
 def history_list():
     """Отдаём историю в QML, новые записи сверху."""
-    items = _history_read()[-HISTORY_LIMIT:]
+    with _history_lock:
+        items = _history_read()[-HISTORY_LIMIT:]
     items.reverse()
     for it in items:
-        it['when'] = time.strftime('%d.%m %H:%M', time.localtime(it.get('ts', 0)))
+        ts = it.get('ts', 0)
+        it['when'] = time.strftime('%d.%m %H:%M', time.localtime(ts))
+        it['has_audio'] = os.path.exists(_audio_path(ts))
     return items
 
 
@@ -146,6 +221,11 @@ def history_clear():
         with _history_lock:
             if os.path.exists(HISTORY):
                 os.remove(HISTORY)
+        for f in os.listdir(AUDIO) if os.path.isdir(AUDIO) else []:
+            try:
+                os.remove(os.path.join(AUDIO, f))
+            except OSError:
+                pass
         return True
     except Exception as exc:
         emit('error', 'Не удалось очистить историю: %s' % exc)
@@ -163,6 +243,7 @@ class Dictation(object):
         self.thread = None
         self.stop_flag = threading.Event()
         self.lock = threading.Lock()
+        self.busy = threading.Lock()
 
     # ---------- загрузка движка ----------
 
@@ -236,7 +317,6 @@ class Dictation(object):
 
     def _record(self):
         """Пишем звук в память до нажатия стоп. Больше ничего не делаем."""
-        np = self.np
         pa = handle = None
         parts = []
         total = 0
@@ -259,8 +339,8 @@ class Dictation(object):
                 except Exception:
                     pass
 
-                parts.append(np.frombuffer(data, dtype=np.int16).copy())
-                total += len(parts[-1])
+                parts.append(data)
+                total += len(data) // 2
                 emit('elapsed', total / float(RATE))
 
                 if total >= max_samples:
@@ -276,9 +356,7 @@ class Dictation(object):
             emit('level', 0.0)
             emit('recording', False)
 
-        if not parts:
-            return np.zeros(0, dtype=np.float32)
-        return np.concatenate(parts).astype(np.float32) / 32768.0
+        return b''.join(parts)
 
     # ---------- расшифровка ----------
 
@@ -298,8 +376,6 @@ class Dictation(object):
         while not self.vad.empty():
             segments.append(self.vad.front.samples)
             self.vad.pop()
-        # Если детектор не нашёл границ — отдаём модели всё целиком,
-        # лучше так, чем молча вернуть пустой результат.
         if not segments and n:
             segments = [pcm]
         return segments
@@ -310,41 +386,78 @@ class Dictation(object):
         self.recognizer.decode_stream(stream)
         return (stream.result.text or '').strip()
 
+    def _transcribe(self, raw):
+        """Из сырых байтов PCM получаем текст. Общий путь для записи и повтора."""
+        np = self.np
+        pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        segments = self._split(pcm)
+        texts = []
+        for idx, seg in enumerate(segments, 1):
+            if len(seg) < RATE * 0.2:
+                continue
+            emit('progress', idx, len(segments))
+            try:
+                text = self._decode(seg)
+            except Exception as exc:
+                emit('error', 'Сбой распознавания: %s' % exc)
+                continue
+            if text:
+                texts.append(text)
+        return ' '.join(texts).strip()
+
     def _session(self):
         try:
-            pcm = self._record()
+            raw = self._record()
 
-            if len(pcm) < RATE * 0.3:
+            if len(raw) < RATE * 2 * 0.3:
                 emit('done', '')
                 return
 
+            ts = time.time()
             emit('transcribing', True)
-            segments = self._split(pcm)
-
-            texts = []
-            for idx, seg in enumerate(segments, 1):
-                if len(seg) < RATE * 0.2:
-                    continue
-                emit('progress', idx, len(segments))
-                try:
-                    text = self._decode(seg)
-                except Exception as exc:
-                    emit('error', 'Сбой распознавания: %s' % exc)
-                    continue
-                if text:
-                    texts.append(text)
-
-            full = ' '.join(texts).strip()
+            full = self._transcribe(raw)
             emit('transcribing', False)
 
             if full:
-                rec = _history_append(full)
-                emit('final', full, rec.get('ts', 0))
+                _history_append(full, ts)
+                _audio_save(ts, raw)
+                emit('final', full, ts)
             emit('done', full)
         except Exception as exc:
             emit('transcribing', False)
             emit('error', str(exc))
             emit('done', '')
+
+    # ---------- повторное распознавание ----------
+
+    def retry(self, ts):
+        def work():
+            if not self.busy.acquire(False):
+                emit('error', 'Уже идёт распознавание')
+                return
+            try:
+                with self.lock:
+                    if self.recognizer is None:
+                        emit('error', 'Движок ещё не загружен')
+                        return
+                raw = _audio_load(ts)
+                if raw is None:
+                    emit('error', 'Запись не сохранилась, переспросить нечего')
+                    emit('retried', ts, '')
+                    return
+                emit('transcribing', True)
+                text = self._transcribe(raw)
+                emit('transcribing', False)
+                if text:
+                    _history_update(ts, text)
+                emit('retried', ts, text)
+            except Exception as exc:
+                emit('transcribing', False)
+                emit('error', str(exc))
+                emit('retried', ts, '')
+            finally:
+                self.busy.release()
+        threading.Thread(target=work, daemon=True).start()
 
 
 _engine = Dictation()
@@ -360,3 +473,7 @@ def start():
 
 def stop():
     _engine.stop()
+
+
+def retry(ts):
+    _engine.retry(float(ts))
