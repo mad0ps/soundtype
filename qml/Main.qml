@@ -413,6 +413,13 @@ MainView {
                 visible: root.depsMissing
                 z: 50
 
+                MouseArea {
+                    // Перехватываем тапы, чтобы они не проваливались на
+                    // транскрипт/клавиатуру под оверлеем, пока идёт первый
+                    // запуск без скачанной модели.
+                    anchors.fill: parent
+                }
+
                 Column {
                     anchors.centerIn: parent
                     width: parent.width - units.gu(6)
