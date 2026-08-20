@@ -54,3 +54,50 @@ class Segmenter(object):
         out = []
         self._drain(out)
         return out
+
+
+class DecodeWorker(object):
+    """Отдельный поток: берёт сегменты из очереди, декодирует, копит текст.
+
+    Декод в C++ (sherpa-onnx) отпускает GIL, поэтому поток реально
+    работает параллельно записи. Ошибка на одном сегменте не убивает
+    поток — сегмент пропускается, остальные декодируются.
+    """
+
+    def __init__(self, decode_fn, on_text, on_error=None, min_samples=0):
+        self.decode_fn = decode_fn
+        self.on_text = on_text
+        self.on_error = on_error
+        self.min_samples = min_samples
+        self.texts = []
+        self.q = queue.Queue()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def put(self, segment):
+        self.q.put(segment)
+
+    def close(self, timeout=None):
+        """Сигнал конца: дожидаемся очереди, отдаём склеенный текст."""
+        self.q.put(_SENTINEL)
+        self._thread.join(timeout)
+        return ' '.join(self.texts).strip()
+
+    def _run(self):
+        idx = 0
+        while True:
+            seg = self.q.get()
+            if seg is _SENTINEL:
+                return
+            if self.min_samples and len(seg) < self.min_samples:
+                continue
+            idx += 1
+            try:
+                text = (self.decode_fn(seg) or '').strip()
+            except Exception as exc:
+                if self.on_error is not None:
+                    self.on_error(exc)
+                continue
+            if text:
+                self.texts.append(text)
+                self.on_text(idx, text)
