@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.join(RUNTIME, 'pylibs'))
 
 import pyotherside  # noqa: E402
 import streaming  # noqa: E402
+import downloader  # noqa: E402
 
 RATE = 16000
 CHANNELS = 1
@@ -483,6 +484,10 @@ _engine = Dictation()
 
 
 def init(_ignored=None):
+    miss = downloader.missing()
+    if miss:
+        emit('deps-missing', miss)
+        return
     _engine.load()
 
 
@@ -496,3 +501,17 @@ def stop():
 
 def retry(ts):
     _engine.retry(float(ts))
+
+
+def fetch_deps():
+    """Скачиваем модель и библиотеки по кнопке из UI, с прогрессом."""
+    def work():
+        try:
+            emit('download-progress', 'подготовка', -1)
+            downloader.fetch_all(
+                lambda stage, pct: emit('download-progress', stage, pct))
+            emit('download-done')
+            _engine.load()
+        except Exception as exc:
+            emit('download-error', str(exc))
+    threading.Thread(target=work, daemon=True).start()
