@@ -111,6 +111,7 @@ MainView {
                     root.elapsed = 0;
                     root.statusText = "Пишу… 0:00";
                     root.partialText = "";
+                    waveform.bars = new Array(waveform.count).fill(0);
                 } else {
                     root.level = 0.0;
                 }
@@ -160,6 +161,8 @@ MainView {
             });
             setHandler("level", function (v) {
                 root.level = v;
+                if (root.recording)
+                    waveform.push(v);
             });
             setHandler("error", function (msg) {
                 root.statusText = "Ошибка: " + msg;
@@ -284,6 +287,44 @@ MainView {
                         opacity: 0.4
                         text: "Нажми микрофон и говори.\nТекст можно править прямо здесь."
                         visible: transcript.text.length === 0 && partialLabel.text.length === 0
+                    }
+                }
+
+                // ---------- голосовые волны ----------
+                Item {
+                    id: waveform
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: units.gu(6)
+                    visible: root.recording
+
+                    property int count: 40
+                    property var bars: []
+
+                    function push(v) {
+                        var a = bars.slice(1);
+                        a.push(v);
+                        bars = a;
+                    }
+
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: units.dp(3)
+                        Repeater {
+                            model: waveform.count
+                            Rectangle {
+                                property real v: index < waveform.bars.length
+                                                 ? waveform.bars[index] : 0
+                                width: units.dp(4)
+                                height: units.dp(3)
+                                       + v * (waveform.height - units.dp(3))
+                                radius: width / 2
+                                color: LomiriColors.orange
+                                anchors.verticalCenter: parent.verticalCenter
+                                Behavior on height {
+                                    NumberAnimation { duration: 110 }
+                                }
+                            }
+                        }
                     }
                 }
 
