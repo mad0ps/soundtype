@@ -18,6 +18,7 @@ MainView {
     property bool transcribing: false
     property real elapsed: 0
     property string progressText: ""
+    property string partialText: ""
     property bool autoCopy: true
     property real retryTs: 0
 
@@ -84,6 +85,7 @@ MainView {
                 if (on) {
                     root.elapsed = 0;
                     root.statusText = "Пишу… 0:00";
+                    root.partialText = "";
                 } else {
                     root.level = 0.0;
                 }
@@ -100,6 +102,9 @@ MainView {
                 root.statusText = total > 1
                     ? "Расшифровываю… " + idx + " из " + total
                     : "Расшифровываю…";
+            });
+            setHandler("partial", function (idx, t) {
+                root.partialText += (root.partialText.length ? " " : "") + t;
             });
             setHandler("final", function (t, ts) {
                 root.appendText(t);
@@ -118,6 +123,7 @@ MainView {
             // Расшифровка закончена: кладём текст в буфер, чтобы можно
             // было сразу вернуться в другое приложение и вставить.
             setHandler("done", function (t) {
+                root.partialText = "";
                 root.statusText = root.ready ? "Готово — нажми микрофон"
                                              : root.statusText;
                 if (!t || !t.length) {
@@ -234,9 +240,13 @@ MainView {
                                 font.italic: true
                                 opacity: 0.55
                                 color: theme.palette.normal.fieldText
-                                text: root.transcribing
-                                      ? ("расшифровываю… " + root.progressText)
-                                      : ""
+                                text: {
+                                    if (root.partialText.length)
+                                        return root.partialText;
+                                    return root.transcribing
+                                          ? ("расшифровываю… " + root.progressText)
+                                          : "";
+                                }
                             }
                         }
                     }
