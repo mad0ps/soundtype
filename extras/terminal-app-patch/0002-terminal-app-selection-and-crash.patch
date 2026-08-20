@@ -1,0 +1,53 @@
+diff --git a/app/qml/TerminalPage.qml b/app/qml/TerminalPage.qml
+index aa1edd1..1c7753c 100644
+--- a/app/qml/TerminalPage.qml
++++ b/app/qml/TerminalPage.qml
+@@ -51,6 +51,36 @@ Page {
+         }
+     }
+ 
++    // While the running program has mouse reporting enabled, the widget
++    // forwards pointer events to it and never builds a selection of its own,
++    // so selection mode produced nothing and Copy stayed disabled. Release
++    // the mouse for the duration of selection mode and restore it after.
++    property var savedUsesMouse
++
++    onStateChanged: {
++        if (!terminal)
++            return;
++        if (state === "SELECTION") {
++            savedUsesMouse = terminal.terminalUsesMouse;
++            terminal.terminalUsesMouse = false;
++        } else if (savedUsesMouse !== undefined) {
++            terminal.terminalUsesMouse = savedUsesMouse;
++            savedUsesMouse = undefined;
++        }
++    }
++
++    // Leaving selection mode reverts the PropertyChanges that keep the
++    // bottom bar alive, so the Loader destroys the bar -- and the MouseArea
++    // whose handler is running. Defer everything until that handler has
++    // returned, otherwise the next statement runs against freed objects and
++    // aborts the process with munmap_chunk(): invalid pointer.
++    function exitSelectionMode() {
++        Qt.callLater(function () {
++            terminalPage.state = "DEFAULT";
++            PopupUtils.open(Qt.resolvedUrl("AlternateActionPopover.qml"));
++        });
++    }
++
+     function changeColor(color) {
+         var red = 1 - (color.r * 0.05)
+         var green = 1 - (color.g * 0.05)
+@@ -292,10 +322,7 @@ Page {
+                 anchors.fill: parent
+                 cursorShape: Qt.PointingHandCursor
+                 hoverEnabled: false
+-                onClicked: {
+-                  terminalPage.state = "DEFAULT";
+-                  PopupUtils.open(Qt.resolvedUrl("AlternateActionPopover.qml"));
+-                }
++                onClicked: terminalPage.exitSelectionMode()
+             }
+         }
+     }

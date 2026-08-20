@@ -3,7 +3,7 @@
     "title": "SoundType",
     "version": "0.5.0",
     "description": "Офлайн-диктовка на Parakeet: говори, жми стоп — текст сразу в буфере обмена",
-    "maintainer": "n0madd3v0ps <n0madd3v0ps@gmail.com>",
+    "maintainer": "mad0ps <190164123+mad0ps@users.noreply.github.com>",
     "architecture": "arm64",
     "framework": "ubuntu-sdk-20.04.1",
     "icon": "assets/icon.svg",

@@ -1,0 +1,13 @@
+diff --git a/lib/TerminalDisplay.h b/lib/TerminalDisplay.h
+index ec329f2..723deae 100644
+--- a/lib/TerminalDisplay.h
++++ b/lib/TerminalDisplay.h
+@@ -98,7 +98,7 @@ class KONSOLEPRIVATE_EXPORT TerminalDisplay : public QQuickPaintedItem
+    Q_PROPERTY(QColor foregroundColor    READ foregroundColor                      NOTIFY foregroundColorChanged  )
+    Q_PROPERTY(QSize terminalSize        READ getTerminalSize                      NOTIFY changedContentSizeSignal)
+    Q_PROPERTY(int lineSpacing           READ lineSpacing     WRITE setLineSpacing NOTIFY lineSpacingChanged      )
+-   Q_PROPERTY(bool terminalUsesMouse    READ getUsesMouse                         NOTIFY usesMouseChanged        )
++   Q_PROPERTY(bool terminalUsesMouse    READ getUsesMouse    WRITE setUsesMouse   NOTIFY usesMouseChanged        )
+    Q_PROPERTY(int lines                 READ lines                                NOTIFY changedContentSizeSignal)
+    Q_PROPERTY(int columns               READ columns                              NOTIFY changedContentSizeSignal)
+    Q_PROPERTY(int scrollbarCurrentValue READ getScrollbarValue WRITE setScrollbarValue NOTIFY scrollbarParamsChanged  )
