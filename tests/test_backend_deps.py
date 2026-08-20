@@ -74,3 +74,22 @@ def test_fetch_deps_not_reentrant(events, monkeypatch):
 
     release.set()
     _wait_event(events, 'download-done')
+
+
+def test_engine_load_invalidates_import_caches(events, monkeypatch):
+    # Первый запуск: pylibs появляется после старта процесса; без
+    # invalidate_caches() python3.8 держит None-кэш пути и import падает
+    # (репро на телефоне 2026-08-21: «No module named numpy» при живом каталоге).
+    import importlib as il
+    calls = []
+    real = il.invalidate_caches
+    monkeypatch.setattr(il, 'invalidate_caches',
+                        lambda: (calls.append(1), real()))
+    eng = backend.Dictation()
+    eng.load()
+    for _ in range(150):
+        if calls or any(e[0] == 'error' for e in events):
+            if calls:
+                break
+        time.sleep(0.02)
+    assert calls, 'load() обязан сбросить кэш импортов до import numpy'

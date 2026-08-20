@@ -21,6 +21,7 @@
 распознаёт Parakeet TDT 0.6b v3 через sherpa-onnx. Всё офлайн.
 """
 
+import importlib
 import json
 import os
 import sys
@@ -256,6 +257,11 @@ class Dictation(object):
         def work():
             try:
                 emit('status', 'loading')
+                # Каталог pylibs мог появиться уже ПОСЛЕ старта процесса
+                # (первый запуск: скачали и сразу грузим). Python 3.8 кэширует
+                # отсутствовавший путь как None в sys.path_importer_cache и
+                # молча пропускает его — без сброса кэша import numpy падает.
+                importlib.invalidate_caches()
                 import numpy as np
                 import sherpa_onnx
 
