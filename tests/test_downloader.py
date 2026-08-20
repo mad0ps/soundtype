@@ -70,3 +70,23 @@ def test_parakeet_partial_failure_stays_retryable(tmp_path, monkeypatch):
 
     # Verify parakeet still marked as missing (encoder was not moved)
     assert 'parakeet' in downloader.missing(str(tmp_path))
+
+
+def test_silero_partial_download_stays_retryable(tmp_path, monkeypatch):
+    """C1: обрыв связи посреди скачивания не должен оставлять готовый файл."""
+    def flaky_download(url, dest=None, progress=None, stage=''):
+        # Пишем только .part (как это делает настоящий download при обрыве
+        # соединения на середине), а затем падаем — до os.replace дело не
+        # доходит.
+        with open(dest, 'wb') as f:
+            f.write(b'oops-not-the-whole-model')
+        raise OSError('соединение оборвалось')
+
+    monkeypatch.setattr(downloader, 'download', flaky_download)
+
+    with pytest.raises(OSError):
+        downloader.fetch_silero(None, str(tmp_path))
+
+    final = tmp_path / 'models' / 'silero_vad.onnx'
+    assert not final.exists()
+    assert 'silero-vad' in downloader.missing(str(tmp_path))

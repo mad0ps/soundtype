@@ -106,8 +106,23 @@ def fetch_wheels(progress=None, data_dir=DATA, force=False):
         if not url:
             raise RuntimeError('не нашёл колесо %s %s (%s)' % (pkg, ver, tag))
         blob = download(url, progress=progress, stage=pkg)
-        with zipfile.ZipFile(io.BytesIO(blob)) as zf:
-            zf.extractall(pylibs)
+        # Распаковываем во временный каталог и переносим целиком, чтобы
+        # ENOSPC/обрыв посреди extractall не оставил частично распакованный
+        # пакет, который missing() ошибочно посчитает готовым.
+        unpack = os.path.join(pylibs, '_unpack_%s' % pkg.replace('-', '_'))
+        shutil.rmtree(unpack, ignore_errors=True)
+        os.makedirs(unpack)
+        try:
+            with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+                zf.extractall(unpack)
+            for name in os.listdir(unpack):
+                final = os.path.join(pylibs, name)
+                shutil.rmtree(final, ignore_errors=True)
+                if os.path.exists(final):
+                    os.remove(final)
+                shutil.move(os.path.join(unpack, name), pylibs)
+        finally:
+            shutil.rmtree(unpack, ignore_errors=True)
 
 
 def fetch_silero(progress=None, data_dir=DATA, force=False):
@@ -116,7 +131,9 @@ def fetch_silero(progress=None, data_dir=DATA, force=False):
     dest = os.path.join(models, 'silero_vad.onnx')
     if os.path.exists(dest) and not force:
         return
-    download(SILERO_URL, dest, progress=progress, stage='детектор тишины')
+    part = dest + '.part'
+    download(SILERO_URL, part, progress=progress, stage='детектор тишины')
+    os.replace(part, dest)
 
 
 def fetch_parakeet(progress=None, data_dir=DATA, force=False):
