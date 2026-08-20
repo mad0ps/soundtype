@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+import io
+import tarfile
+
 import pytest
 
 import downloader
@@ -37,3 +40,33 @@ def test_fetch_error_bubbles_up(tmp_path, monkeypatch):
     monkeypatch.setattr(downloader, 'download', boom)
     with pytest.raises(OSError):
         downloader.fetch_all(None, str(tmp_path))
+
+
+def test_parakeet_partial_failure_stays_retryable(tmp_path, monkeypatch):
+    """Incomplete extraction must not mark parakeet as present."""
+    # Create fake tar.bz2 with only encoder.int8.onnx (missing decoder, etc)
+    fake_tar_buf = io.BytesIO()
+    with tarfile.open(fileobj=fake_tar_buf, mode='w:bz2') as tf:
+        inner_dir = tmp_path / '_fake_model'
+        inner_dir.mkdir()
+        encoder_file = inner_dir / 'encoder.int8.onnx'
+        encoder_file.write_bytes(b'fake_encoder')
+        tf.add(str(inner_dir), arcname='fake-model-dir')
+    fake_tar_content = fake_tar_buf.getvalue()
+
+    # Monkeypatch download to write the fake tar instead of fetching real one
+    def fake_download(url, dest=None, progress=None, stage=''):
+        if dest:
+            with open(dest, 'wb') as f:
+                f.write(fake_tar_content)
+            return dest
+        return fake_tar_content
+
+    monkeypatch.setattr(downloader, 'download', fake_download)
+
+    # fetch_parakeet should fail (decoder is first in new order, missing)
+    with pytest.raises(RuntimeError, match='в архиве нет файла decoder'):
+        downloader.fetch_parakeet(None, str(tmp_path))
+
+    # Verify parakeet still marked as missing (encoder was not moved)
+    assert 'parakeet' in downloader.missing(str(tmp_path))

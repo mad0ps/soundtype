@@ -145,8 +145,11 @@ def fetch_parakeet(progress=None, data_dir=DATA, force=False):
 
     shutil.rmtree(target, ignore_errors=True)
     os.makedirs(target)
-    for fn in ('encoder.int8.onnx', 'decoder.int8.onnx',
-               'joiner.int8.onnx', 'tokens.txt'):
+    # Encoder last so failed extraction stays retryable: if any earlier file
+    # is missing, RuntimeError raises before encoder is placed, and missing()
+    # will still report parakeet absent.
+    for fn in ('decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt',
+               'encoder.int8.onnx'):
         s = os.path.join(src, fn)
         if not os.path.exists(s):
             raise RuntimeError('в архиве нет файла %s' % fn)
