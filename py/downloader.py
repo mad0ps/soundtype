@@ -1,0 +1,210 @@
+# -*- coding: utf-8 -*-
+"""Скачивание модели и python-библиотек в каталог данных приложения.
+
+Одна логика на двух хозяев:
+
+  * scripts/fetch-deps.py — ручной запуск из терминала;
+  * py/backend.py — кнопка «Скачать» при первом запуске приложения.
+
+Прогресс отдаётся колбэком progress(stage, pct): stage — человекочитаемое
+имя этапа, pct — целые проценты либо -1, если размер неизвестен. Никаких
+pyotherside и print — модуль чистый, его гоняют тесты на любой машине.
+Сбой = исключение наружу; докачки нет, повтор качает файл заново.
+"""
+
+import io
+import json
+import os
+import shutil
+import tarfile
+import urllib.request
+import zipfile
+
+APP = 'soundtype.n0madd3v0ps'
+HOME = os.environ.get('HOME', os.path.expanduser('~'))
+DATA = os.path.join(HOME, '.local', 'share', APP)
+
+PARAKEET_URL = ('https://github.com/k2-fsa/sherpa-onnx/releases/download/'
+                'asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2')
+SILERO_URL = ('https://github.com/k2-fsa/sherpa-onnx/releases/download/'
+              'asr-models/silero_vad.onnx')
+
+# Колёса под Python 3.8 / aarch64 — ровно то, что стоит в Ubuntu Touch 20.04.
+# Четвёртый элемент — файл-маркер готовности: по нему missing() судит, что
+# пакет установлен целиком, и он переносится на место ПОСЛЕДНИМ (атомарность).
+# sherpa-onnx-core обязателен: он кладёт libonnxruntime.so в то же дерево
+# sherpa_onnx, без него _sherpa_onnx не импортируется (ImportError на телефоне).
+WHEELS = [
+    ('numpy', '1.24.4', 'cp38-cp38-manylinux_2_17_aarch64',
+     'numpy/version.py'),
+    ('sherpa-onnx', '1.13.6', 'cp38-cp38-manylinux2014_aarch64',
+     'sherpa_onnx/lib/_sherpa_onnx.cpython-38-aarch64-linux-gnu.so'),
+    ('sherpa-onnx-core', '1.13.6', 'py3-none-manylinux2014_aarch64',
+     'sherpa_onnx/lib/libonnxruntime.so'),
+]
+
+UA = {'User-Agent': 'soundtype-downloader'}
+
+
+def _models(data_dir):
+    return os.path.join(data_dir, 'models')
+
+
+def _pylibs(data_dir):
+    return os.path.join(data_dir, 'runtime', 'pylibs')
+
+
+def missing(data_dir=DATA):
+    """Чего не хватает для работы. Пустой список — всё на месте."""
+    out = []
+    for pkg, _ver, _tag, probe in WHEELS:
+        if not os.path.exists(os.path.join(_pylibs(data_dir), probe)):
+            out.append(pkg)
+    if not os.path.exists(os.path.join(_models(data_dir), 'silero_vad.onnx')):
+        out.append('silero-vad')
+    if not os.path.exists(os.path.join(_models(data_dir), 'parakeet',
+                                       'encoder.int8.onnx')):
+        out.append('parakeet')
+    return out
+
+
+def download(url, dest=None, progress=None, stage=''):
+    """Качаем файл; dest=None — в память. progress зовём на целых процентах."""
+    req = urllib.request.Request(url, headers=UA)
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        total = int(resp.headers.get('Content-Length') or 0)
+        buf = open(dest, 'wb') if dest else io.BytesIO()
+        got = 0
+        last = -2
+        try:
+            while True:
+                chunk = resp.read(256 * 1024)
+                if not chunk:
+                    break
+                buf.write(chunk)
+                got += len(chunk)
+                if progress is not None:
+                    pct = int(got * 100 / total) if total else -1
+                    if pct != last:
+                        last = pct
+                        progress(stage, pct)
+            if dest:
+                return dest
+            return buf.getvalue()
+        finally:
+            if dest:
+                buf.close()
+
+
+
+def _merge_move(src_root, dst_root, last_rel=None):
+    """Переносим дерево src в dst, СЛИВАЯ с уже установленным.
+
+    Разные колёса кладут файлы в один каталог (sherpa-onnx и
+    sherpa-onnx-core делят дерево sherpa_onnx/) — сносить существующее
+    нельзя. Файл last_rel (маркер готовности из WHEELS) переносится
+    последним: обрыв посреди переноса оставит missing() честным.
+    """
+    last_pair = None
+    for root, _dirs, files in os.walk(src_root):
+        rel = os.path.relpath(root, src_root)
+        target = dst_root if rel == '.' else os.path.join(dst_root, rel)
+        os.makedirs(target, exist_ok=True)
+        for fn in files:
+            rel_file = fn if rel == '.' else os.path.join(rel, fn)
+            pair = (os.path.join(root, fn), os.path.join(target, fn))
+            if last_rel and os.path.normpath(rel_file) == \
+                    os.path.normpath(last_rel):
+                last_pair = pair
+                continue
+            os.replace(pair[0], pair[1])
+    if last_pair is not None:
+        os.replace(last_pair[0], last_pair[1])
+
+
+def fetch_wheels(progress=None, data_dir=DATA, force=False):
+    pylibs = _pylibs(data_dir)
+    os.makedirs(pylibs, exist_ok=True)
+    for pkg, ver, tag, probe in WHEELS:
+        if os.path.exists(os.path.join(pylibs, probe)) and not force:
+            continue
+        meta = json.loads(download(
+            'https://pypi.org/pypi/%s/%s/json' % (pkg, ver)).decode('utf-8'))
+        url = None
+        for f in meta['urls']:
+            if tag in f['filename']:
+                url = f['url']
+                break
+        if not url:
+            raise RuntimeError('не нашёл колесо %s %s (%s)' % (pkg, ver, tag))
+        blob = download(url, progress=progress, stage=pkg)
+        # Распаковываем во временный каталог и переносим целиком, чтобы
+        # ENOSPC/обрыв посреди extractall не оставил частично распакованный
+        # пакет, который missing() ошибочно посчитает готовым.
+        unpack = os.path.join(pylibs, '_unpack_%s' % pkg.replace('-', '_'))
+        shutil.rmtree(unpack, ignore_errors=True)
+        os.makedirs(unpack)
+        try:
+            with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+                zf.extractall(unpack)
+            _merge_move(unpack, pylibs, probe)
+        finally:
+            shutil.rmtree(unpack, ignore_errors=True)
+
+
+def fetch_silero(progress=None, data_dir=DATA, force=False):
+    models = _models(data_dir)
+    os.makedirs(models, exist_ok=True)
+    dest = os.path.join(models, 'silero_vad.onnx')
+    if os.path.exists(dest) and not force:
+        return
+    part = dest + '.part'
+    download(SILERO_URL, part, progress=progress, stage='детектор тишины')
+    os.replace(part, dest)
+
+
+def fetch_parakeet(progress=None, data_dir=DATA, force=False):
+    models = _models(data_dir)
+    os.makedirs(models, exist_ok=True)
+    target = os.path.join(models, 'parakeet')
+    if os.path.exists(os.path.join(target, 'encoder.int8.onnx')) and not force:
+        return
+    tmp = os.path.join(models, '_parakeet.tar.bz2')
+    download(PARAKEET_URL, tmp, progress=progress, stage='модель Parakeet')
+
+    if progress is not None:
+        progress('распаковка', -1)
+    unpack = os.path.join(models, '_unpack')
+    shutil.rmtree(unpack, ignore_errors=True)
+    os.makedirs(unpack)
+    with tarfile.open(tmp, 'r:bz2') as tf:
+        tf.extractall(unpack)
+
+    # Внутри архива один каталог — забираем из него нужные файлы.
+    inner = [os.path.join(unpack, d) for d in os.listdir(unpack)]
+    inner = [d for d in inner if os.path.isdir(d)]
+    if not inner:
+        raise RuntimeError('в архиве не нашлось каталога с моделью')
+    src = inner[0]
+
+    shutil.rmtree(target, ignore_errors=True)
+    os.makedirs(target)
+    # Encoder last so failed extraction stays retryable: if any earlier file
+    # is missing, RuntimeError raises before encoder is placed, and missing()
+    # will still report parakeet absent.
+    for fn in ('decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt',
+               'encoder.int8.onnx'):
+        s = os.path.join(src, fn)
+        if not os.path.exists(s):
+            raise RuntimeError('в архиве нет файла %s' % fn)
+        shutil.move(s, os.path.join(target, fn))
+
+    shutil.rmtree(unpack, ignore_errors=True)
+    os.remove(tmp)
+
+
+def fetch_all(progress=None, data_dir=DATA, force=False):
+    """Скачать всё недостающее. Сбой = исключение наружу."""
+    fetch_wheels(progress, data_dir, force)
+    fetch_silero(progress, data_dir, force)
+    fetch_parakeet(progress, data_dir, force)

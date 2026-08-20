@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """SoundType backend.
 
-Порядок работы простой и предсказуемый:
+Порядок работы (с 0.6 — потоковый):
 
-  1. Нажали запись — пишем звук с микрофона в память, и только пишем.
-     Никакого распознавания в это время не происходит, поэтому терять
-     на паузах нечего: цикл чтения не может ничем застопориться.
-  2. Нажали стоп — весь накопленный звук режем детектором тишины на
-     фразы и прогоняем через Parakeet по очереди.
+  1. Нажали запись — пишем звук с микрофона в память. В том же цикле
+     лёгкий VAD (silero) режет накопленный звук на фразы прямо по ходу
+     записи; готовые фразы уходят в очередь отдельному потоку, который
+     их распознаёт, пока запись продолжается. Цикл чтения микрофона
+     сам по себе делает только это чтение — тяжёлый декод его не
+     тормозит, sherpa-onnx отпускает GIL.
+  2. Нажали стоп — доразбирается последняя ещё не закрытая фраза, и
+     поток декода дожидается своей очереди.
   3. Готовый текст уходит в историю и сразу копируется в буфер обмена.
 
 Звук последних записей сохраняется на диск, чтобы расшифровку можно
@@ -18,6 +21,7 @@
 распознаёт Parakeet TDT 0.6b v3 через sherpa-onnx. Всё офлайн.
 """
 
+import importlib
 import json
 import os
 import sys
@@ -37,11 +41,13 @@ AUDIO = os.path.join(DATA, 'audio')
 sys.path.insert(0, os.path.join(RUNTIME, 'pylibs'))
 
 import pyotherside  # noqa: E402
+import streaming  # noqa: E402
+import downloader  # noqa: E402
 
 RATE = 16000
 CHANNELS = 1
 VAD_WINDOW = 512                  # silero работает окнами по 512 отсчётов
-CHUNK_BYTES = VAD_WINDOW * 2 * 8  # читаем по 8 окон за раз
+CHUNK_BYTES = VAD_WINDOW * 2 * 4  # 4 окна = 0.128 с: level для волны ~8 раз/с
 
 MAX_SPEECH = 30.0
 VAD_BUFFER_SECONDS = 120
@@ -251,6 +257,11 @@ class Dictation(object):
         def work():
             try:
                 emit('status', 'loading')
+                # Каталог pylibs мог появиться уже ПОСЛЕ старта процесса
+                # (первый запуск: скачали и сразу грузим). Python 3.8 кэширует
+                # отсутствовавший путь как None в sys.path_importer_cache и
+                # молча пропускает его — без сброса кэша import numpy падает.
+                importlib.invalidate_caches()
                 import numpy as np
                 import sherpa_onnx
 
@@ -293,6 +304,9 @@ class Dictation(object):
             if self.recognizer is None:
                 emit('error', 'Движок ещё не загружен')
                 return
+        if not self.busy.acquire(False):
+            emit('error', 'Идёт распознавание — подожди')
+            return
         self.stop_flag.clear()
         self.thread = threading.Thread(target=self._session, daemon=True)
         self.thread.start()
@@ -315,8 +329,8 @@ class Dictation(object):
 
     # ---------- запись ----------
 
-    def _record(self):
-        """Пишем звук в память до нажатия стоп. Больше ничего не делаем."""
+    def _record(self, on_chunk=None):
+        """Пишем звук в память до нажатия стоп; каждый кусок отдаём колбэку."""
         pa = handle = None
         parts = []
         total = 0
@@ -343,6 +357,12 @@ class Dictation(object):
                 total += len(data) // 2
                 emit('elapsed', total / float(RATE))
 
+                if on_chunk is not None:
+                    try:
+                        on_chunk(data)
+                    except Exception:
+                        pass
+
                 if total >= max_samples:
                     emit('error', 'Достигнут предел записи в %d минут'
                          % (MAX_RECORD_SECONDS // 60))
@@ -361,22 +381,12 @@ class Dictation(object):
     # ---------- расшифровка ----------
 
     def _split(self, pcm):
-        """Режем запись на фразы. Звук уже весь в памяти, ничего не теряется."""
-        segments = []
+        """Режем запись на фразы. Общий механизм с потоковым режимом."""
         self.vad.reset()
-        i = 0
-        n = len(pcm)
-        while i + VAD_WINDOW <= n:
-            self.vad.accept_waveform(pcm[i:i + VAD_WINDOW])
-            i += VAD_WINDOW
-            while not self.vad.empty():
-                segments.append(self.vad.front.samples)
-                self.vad.pop()
-        self.vad.flush()
-        while not self.vad.empty():
-            segments.append(self.vad.front.samples)
-            self.vad.pop()
-        if not segments and n:
+        seg = streaming.Segmenter(self.vad, self.np, VAD_WINDOW)
+        segments = seg.feed(pcm)
+        segments += seg.flush()
+        if not segments and len(pcm):
             segments = [pcm]
         return segments
 
@@ -406,17 +416,53 @@ class Dictation(object):
         return ' '.join(texts).strip()
 
     def _session(self):
+        worker = None
         try:
-            raw = self._record()
+            np = self.np
+            self.vad.reset()
+            seg = streaming.Segmenter(self.vad, np, VAD_WINDOW)
+            worker = streaming.DecodeWorker(
+                self._decode,
+                on_text=lambda idx, text: emit('partial', idx, text),
+                on_error=lambda exc: emit('error',
+                                          'Сбой распознавания: %s' % exc),
+                min_samples=int(RATE * 0.2))
 
-            if len(raw) < RATE * 2 * 0.3:
+            queued = [False]  # хоть один сегмент дошёл до воркера
+
+            def on_chunk(data):
+                samples = (np.frombuffer(data, dtype=np.int16)
+                           .astype(np.float32) / 32768.0)
+                for s in seg.feed(samples):
+                    queued[0] = True
+                    worker.put(s)
+
+            raw = self._record(on_chunk)
+            ts = time.time()
+            short = len(raw) < RATE * 2 * 0.3
+
+            # На стопе осталась только последняя открытая фраза.
+            emit('transcribing', True)
+            for s in seg.flush():
+                queued[0] = True
+                worker.put(s)
+
+            if not short and not queued[0]:
+                # VAD ни разу не «дозрел» до фразы за всю запись — например,
+                # порог не сработал на тихой речи. Не оставляем пользователя
+                # без единого слова текста: декодируем всю запись целиком,
+                # но только один раз (не нарушает грабли #2918 — это разовый
+                # decode всего буфера, а не повторный decode растущего).
+                whole = (np.frombuffer(raw, dtype=np.int16)
+                         .astype(np.float32) / 32768.0)
+                worker.put(whole)
+
+            full = worker.close(timeout=180)
+            emit('transcribing', False)
+
+            if short:
                 emit('done', '')
                 return
-
-            ts = time.time()
-            emit('transcribing', True)
-            full = self._transcribe(raw)
-            emit('transcribing', False)
 
             if full:
                 _history_append(full, ts)
@@ -424,14 +470,25 @@ class Dictation(object):
                 emit('final', full, ts)
             emit('done', full)
         except Exception as exc:
+            if worker is not None:
+                worker.close(timeout=5)
             emit('transcribing', False)
             emit('error', str(exc))
             emit('done', '')
+        finally:
+            if self.busy.locked():
+                try:
+                    self.busy.release()
+                except RuntimeError:
+                    pass
 
     # ---------- повторное распознавание ----------
 
     def retry(self, ts):
         def work():
+            if self.thread is not None and self.thread.is_alive():
+                emit('error', 'Идёт запись — сначала останови её')
+                return
             if not self.busy.acquire(False):
                 emit('error', 'Уже идёт распознавание')
                 return
@@ -464,6 +521,10 @@ _engine = Dictation()
 
 
 def init(_ignored=None):
+    miss = downloader.missing()
+    if miss:
+        emit('deps-missing', miss)
+        return
     _engine.load()
 
 
@@ -477,3 +538,30 @@ def stop():
 
 def retry(ts):
     _engine.retry(float(ts))
+
+
+_fetch_lock = threading.Lock()
+
+
+def fetch_deps():
+    """Скачиваем модель и библиотеки по кнопке из UI, с прогрессом.
+
+    Кнопка «Скачать» в QML не блокируется на время загрузки, поэтому
+    двойной тап должен быть безвредным: второй вызов не запускает
+    параллельную загрузку в те же временные пути, а просто выходит.
+    """
+    if not _fetch_lock.acquire(False):
+        return
+
+    def work():
+        try:
+            emit('download-progress', 'подготовка', -1)
+            downloader.fetch_all(
+                lambda stage, pct: emit('download-progress', stage, pct))
+            emit('download-done')
+            _engine.load()
+        except Exception as exc:
+            emit('download-error', str(exc))
+        finally:
+            _fetch_lock.release()
+    threading.Thread(target=work, daemon=True).start()

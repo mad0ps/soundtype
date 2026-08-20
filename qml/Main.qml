@@ -18,8 +18,14 @@ MainView {
     property bool transcribing: false
     property real elapsed: 0
     property string progressText: ""
+    property string partialText: ""
     property bool autoCopy: true
     property real retryTs: 0
+    property bool depsMissing: false
+    property bool downloading: false
+    property string downloadStage: ""
+    property int downloadPct: -1
+    property string downloadError: ""
 
     function mmss(s) {
         var m = Math.floor(s / 60);
@@ -70,6 +76,26 @@ MainView {
             setHandler("status", function (s) {
                 root.statusText = "Загрузка модели…";
             });
+            setHandler("deps-missing", function (what) {
+                root.depsMissing = true;
+                root.statusText = "Нужно скачать модель";
+            });
+            setHandler("download-progress", function (stage, pct) {
+                root.downloading = true;
+                root.downloadError = "";
+                root.downloadStage = stage;
+                root.downloadPct = pct;
+            });
+            setHandler("download-done", function () {
+                root.downloading = false;
+                root.depsMissing = false;
+                root.statusText = "Загрузка движка…";
+            });
+            setHandler("download-error", function (msg) {
+                root.downloading = false;
+                root.downloadError = msg;
+                root.statusText = "Ошибка загрузки";
+            });
             setHandler("ready", function (name) {
                 root.ready = true;
                 root.statusText = "Готово — нажми микрофон";
@@ -84,6 +110,8 @@ MainView {
                 if (on) {
                     root.elapsed = 0;
                     root.statusText = "Пишу… 0:00";
+                    root.partialText = "";
+                    waveform.bars = new Array(waveform.count).fill(0);
                 } else {
                     root.level = 0.0;
                 }
@@ -100,6 +128,9 @@ MainView {
                 root.statusText = total > 1
                     ? "Расшифровываю… " + idx + " из " + total
                     : "Расшифровываю…";
+            });
+            setHandler("partial", function (idx, t) {
+                root.partialText += (root.partialText.length ? " " : "") + t;
             });
             setHandler("final", function (t, ts) {
                 root.appendText(t);
@@ -118,6 +149,7 @@ MainView {
             // Расшифровка закончена: кладём текст в буфер, чтобы можно
             // было сразу вернуться в другое приложение и вставить.
             setHandler("done", function (t) {
+                root.partialText = "";
                 root.statusText = root.ready ? "Готово — нажми микрофон"
                                              : root.statusText;
                 if (!t || !t.length) {
@@ -129,6 +161,8 @@ MainView {
             });
             setHandler("level", function (v) {
                 root.level = v;
+                if (root.recording)
+                    waveform.push(v);
             });
             setHandler("error", function (msg) {
                 root.statusText = "Ошибка: " + msg;
@@ -234,9 +268,13 @@ MainView {
                                 font.italic: true
                                 opacity: 0.55
                                 color: theme.palette.normal.fieldText
-                                text: root.transcribing
-                                      ? ("расшифровываю… " + root.progressText)
-                                      : ""
+                                text: {
+                                    if (root.partialText.length)
+                                        return root.partialText;
+                                    return root.transcribing
+                                          ? ("расшифровываю… " + root.progressText)
+                                          : "";
+                                }
                             }
                         }
                     }
@@ -249,6 +287,44 @@ MainView {
                         opacity: 0.4
                         text: "Нажми микрофон и говори.\nТекст можно править прямо здесь."
                         visible: transcript.text.length === 0 && partialLabel.text.length === 0
+                    }
+                }
+
+                // ---------- голосовые волны ----------
+                Item {
+                    id: waveform
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: units.gu(6)
+                    visible: root.recording
+
+                    property int count: 40
+                    property var bars: []
+
+                    function push(v) {
+                        var a = bars.slice(1);
+                        a.push(v);
+                        bars = a;
+                    }
+
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: units.dp(3)
+                        Repeater {
+                            model: waveform.count
+                            Rectangle {
+                                property real v: index < waveform.bars.length
+                                                 ? waveform.bars[index] : 0
+                                width: units.dp(4)
+                                height: units.dp(3)
+                                       + v * (waveform.height - units.dp(3))
+                                radius: width / 2
+                                color: LomiriColors.orange
+                                anchors.verticalCenter: parent.verticalCenter
+                                Behavior on height {
+                                    NumberAnimation { duration: 110 }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -321,6 +397,80 @@ MainView {
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            // Первый запуск: модели ещё нет — предлагаем скачать.
+            Rectangle {
+                anchors {
+                    top: pageHeader.bottom
+                    left: parent.left
+                    right: parent.right
+                    bottom: parent.bottom
+                }
+                color: theme.palette.normal.background
+                visible: root.depsMissing
+                z: 50
+
+                MouseArea {
+                    // Перехватываем тапы, чтобы они не проваливались на
+                    // транскрипт/клавиатуру под оверлеем, пока идёт первый
+                    // запуск без скачанной модели.
+                    anchors.fill: parent
+                }
+
+                Column {
+                    anchors.centerIn: parent
+                    width: parent.width - units.gu(6)
+                    spacing: units.gu(2)
+
+                    Icon {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: units.gu(6)
+                        height: width
+                        name: "save-to"
+                    }
+                    Label {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        text: "Для работы нужно скачать модель распознавания "
+                              + "(около 500 МБ). Лучше делать это по Wi-Fi.\n"
+                              + "После загрузки приложение работает полностью офлайн."
+                    }
+                    Label {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        color: LomiriColors.red
+                        visible: root.downloadError.length > 0
+                        text: root.downloadError
+                    }
+                    ProgressBar {
+                        width: parent.width
+                        visible: root.downloading
+                        indeterminate: root.downloadPct < 0
+                        minimumValue: 0
+                        maximumValue: 100
+                        value: root.downloadPct
+                    }
+                    Label {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        visible: root.downloading
+                        textSize: Label.Small
+                        opacity: 0.7
+                        text: root.downloadStage
+                              + (root.downloadPct >= 0
+                                 ? "  " + root.downloadPct + "%" : "")
+                    }
+                    Button {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: !root.downloading
+                        color: LomiriColors.green
+                        text: root.downloadError.length ? "Повторить" : "Скачать"
+                        onClicked: py.call("backend.fetch_deps", [])
                     }
                 }
             }
