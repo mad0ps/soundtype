@@ -30,9 +30,17 @@ SILERO_URL = ('https://github.com/k2-fsa/sherpa-onnx/releases/download/'
               'asr-models/silero_vad.onnx')
 
 # Колёса под Python 3.8 / aarch64 — ровно то, что стоит в Ubuntu Touch 20.04.
+# Четвёртый элемент — файл-маркер готовности: по нему missing() судит, что
+# пакет установлен целиком, и он переносится на место ПОСЛЕДНИМ (атомарность).
+# sherpa-onnx-core обязателен: он кладёт libonnxruntime.so в то же дерево
+# sherpa_onnx, без него _sherpa_onnx не импортируется (ImportError на телефоне).
 WHEELS = [
-    ('numpy', '1.24.4', 'cp38-cp38-manylinux_2_17_aarch64'),
-    ('sherpa-onnx', '1.13.6', 'cp38-cp38-manylinux2014_aarch64'),
+    ('numpy', '1.24.4', 'cp38-cp38-manylinux_2_17_aarch64',
+     'numpy/version.py'),
+    ('sherpa-onnx', '1.13.6', 'cp38-cp38-manylinux2014_aarch64',
+     'sherpa_onnx/lib/_sherpa_onnx.cpython-38-aarch64-linux-gnu.so'),
+    ('sherpa-onnx-core', '1.13.6', 'py3-none-manylinux2014_aarch64',
+     'sherpa_onnx/lib/libonnxruntime.so'),
 ]
 
 UA = {'User-Agent': 'soundtype-downloader'}
@@ -49,9 +57,8 @@ def _pylibs(data_dir):
 def missing(data_dir=DATA):
     """Чего не хватает для работы. Пустой список — всё на месте."""
     out = []
-    for pkg, _ver, _tag in WHEELS:
-        if not os.path.exists(os.path.join(_pylibs(data_dir),
-                                           pkg.replace('-', '_'))):
+    for pkg, _ver, _tag, probe in WHEELS:
+        if not os.path.exists(os.path.join(_pylibs(data_dir), probe)):
             out.append(pkg)
     if not os.path.exists(os.path.join(_models(data_dir), 'silero_vad.onnx')):
         out.append('silero-vad')
@@ -89,12 +96,37 @@ def download(url, dest=None, progress=None, stage=''):
                 buf.close()
 
 
+
+def _merge_move(src_root, dst_root, last_rel=None):
+    """Переносим дерево src в dst, СЛИВАЯ с уже установленным.
+
+    Разные колёса кладут файлы в один каталог (sherpa-onnx и
+    sherpa-onnx-core делят дерево sherpa_onnx/) — сносить существующее
+    нельзя. Файл last_rel (маркер готовности из WHEELS) переносится
+    последним: обрыв посреди переноса оставит missing() честным.
+    """
+    last_pair = None
+    for root, _dirs, files in os.walk(src_root):
+        rel = os.path.relpath(root, src_root)
+        target = dst_root if rel == '.' else os.path.join(dst_root, rel)
+        os.makedirs(target, exist_ok=True)
+        for fn in files:
+            rel_file = fn if rel == '.' else os.path.join(rel, fn)
+            pair = (os.path.join(root, fn), os.path.join(target, fn))
+            if last_rel and os.path.normpath(rel_file) == \
+                    os.path.normpath(last_rel):
+                last_pair = pair
+                continue
+            os.replace(pair[0], pair[1])
+    if last_pair is not None:
+        os.replace(last_pair[0], last_pair[1])
+
+
 def fetch_wheels(progress=None, data_dir=DATA, force=False):
     pylibs = _pylibs(data_dir)
     os.makedirs(pylibs, exist_ok=True)
-    for pkg, ver, tag in WHEELS:
-        probe = os.path.join(pylibs, pkg.replace('-', '_'))
-        if os.path.exists(probe) and not force:
+    for pkg, ver, tag, probe in WHEELS:
+        if os.path.exists(os.path.join(pylibs, probe)) and not force:
             continue
         meta = json.loads(download(
             'https://pypi.org/pypi/%s/%s/json' % (pkg, ver)).decode('utf-8'))
@@ -115,12 +147,7 @@ def fetch_wheels(progress=None, data_dir=DATA, force=False):
         try:
             with zipfile.ZipFile(io.BytesIO(blob)) as zf:
                 zf.extractall(unpack)
-            for name in os.listdir(unpack):
-                final = os.path.join(pylibs, name)
-                shutil.rmtree(final, ignore_errors=True)
-                if os.path.exists(final):
-                    os.remove(final)
-                shutil.move(os.path.join(unpack, name), pylibs)
+            _merge_move(unpack, pylibs, probe)
         finally:
             shutil.rmtree(unpack, ignore_errors=True)
 
