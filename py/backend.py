@@ -295,6 +295,9 @@ class Dictation(object):
             if self.recognizer is None:
                 emit('error', 'Движок ещё не загружен')
                 return
+        if not self.busy.acquire(False):
+            emit('error', 'Идёт распознавание — подожди')
+            return
         self.stop_flag.clear()
         self.thread = threading.Thread(target=self._session, daemon=True)
         self.thread.start()
@@ -341,12 +344,15 @@ class Dictation(object):
                 except Exception:
                     pass
 
-                if on_chunk is not None:
-                    on_chunk(data)
-
                 parts.append(data)
                 total += len(data) // 2
                 emit('elapsed', total / float(RATE))
+
+                if on_chunk is not None:
+                    try:
+                        on_chunk(data)
+                    except Exception:
+                        pass
 
                 if total >= max_samples:
                     emit('error', 'Достигнут предел записи в %d минут'
@@ -413,23 +419,39 @@ class Dictation(object):
                                           'Сбой распознавания: %s' % exc),
                 min_samples=int(RATE * 0.2))
 
+            queued = [False]  # хоть один сегмент дошёл до воркера
+
             def on_chunk(data):
                 samples = (np.frombuffer(data, dtype=np.int16)
                            .astype(np.float32) / 32768.0)
                 for s in seg.feed(samples):
+                    queued[0] = True
                     worker.put(s)
 
             raw = self._record(on_chunk)
             ts = time.time()
+            short = len(raw) < RATE * 2 * 0.3
 
             # На стопе осталась только последняя открытая фраза.
             emit('transcribing', True)
             for s in seg.flush():
+                queued[0] = True
                 worker.put(s)
+
+            if not short and not queued[0]:
+                # VAD ни разу не «дозрел» до фразы за всю запись — например,
+                # порог не сработал на тихой речи. Не оставляем пользователя
+                # без единого слова текста: декодируем всю запись целиком,
+                # но только один раз (не нарушает грабли #2918 — это разовый
+                # decode всего буфера, а не повторный decode растущего).
+                whole = (np.frombuffer(raw, dtype=np.int16)
+                         .astype(np.float32) / 32768.0)
+                worker.put(whole)
+
             full = worker.close(timeout=180)
             emit('transcribing', False)
 
-            if len(raw) < RATE * 2 * 0.3:
+            if short:
                 emit('done', '')
                 return
 
@@ -444,6 +466,12 @@ class Dictation(object):
             emit('transcribing', False)
             emit('error', str(exc))
             emit('done', '')
+        finally:
+            if self.busy.locked():
+                try:
+                    self.busy.release()
+                except RuntimeError:
+                    pass
 
     # ---------- повторное распознавание ----------
 
