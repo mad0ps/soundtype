@@ -37,11 +37,12 @@ AUDIO = os.path.join(DATA, 'audio')
 sys.path.insert(0, os.path.join(RUNTIME, 'pylibs'))
 
 import pyotherside  # noqa: E402
+import streaming  # noqa: E402
 
 RATE = 16000
 CHANNELS = 1
 VAD_WINDOW = 512                  # silero работает окнами по 512 отсчётов
-CHUNK_BYTES = VAD_WINDOW * 2 * 8  # читаем по 8 окон за раз
+CHUNK_BYTES = VAD_WINDOW * 2 * 4  # 4 окна = 0.128 с: level для волны ~8 раз/с
 
 MAX_SPEECH = 30.0
 VAD_BUFFER_SECONDS = 120
@@ -315,8 +316,8 @@ class Dictation(object):
 
     # ---------- запись ----------
 
-    def _record(self):
-        """Пишем звук в память до нажатия стоп. Больше ничего не делаем."""
+    def _record(self, on_chunk=None):
+        """Пишем звук в память до нажатия стоп; каждый кусок отдаём колбэку."""
         pa = handle = None
         parts = []
         total = 0
@@ -338,6 +339,9 @@ class Dictation(object):
                     emit('level', min(1.0, audioop.rms(data, 2) / 12000.0))
                 except Exception:
                     pass
+
+                if on_chunk is not None:
+                    on_chunk(data)
 
                 parts.append(data)
                 total += len(data) // 2
@@ -361,22 +365,12 @@ class Dictation(object):
     # ---------- расшифровка ----------
 
     def _split(self, pcm):
-        """Режем запись на фразы. Звук уже весь в памяти, ничего не теряется."""
-        segments = []
+        """Режем запись на фразы. Общий механизм с потоковым режимом."""
         self.vad.reset()
-        i = 0
-        n = len(pcm)
-        while i + VAD_WINDOW <= n:
-            self.vad.accept_waveform(pcm[i:i + VAD_WINDOW])
-            i += VAD_WINDOW
-            while not self.vad.empty():
-                segments.append(self.vad.front.samples)
-                self.vad.pop()
-        self.vad.flush()
-        while not self.vad.empty():
-            segments.append(self.vad.front.samples)
-            self.vad.pop()
-        if not segments and n:
+        seg = streaming.Segmenter(self.vad, self.np, VAD_WINDOW)
+        segments = seg.feed(pcm)
+        segments += seg.flush()
+        if not segments and len(pcm):
             segments = [pcm]
         return segments
 
@@ -406,17 +400,37 @@ class Dictation(object):
         return ' '.join(texts).strip()
 
     def _session(self):
+        worker = None
         try:
-            raw = self._record()
+            np = self.np
+            self.vad.reset()
+            seg = streaming.Segmenter(self.vad, np, VAD_WINDOW)
+            worker = streaming.DecodeWorker(
+                self._decode,
+                on_text=lambda idx, text: emit('partial', idx, text),
+                on_error=lambda exc: emit('error',
+                                          'Сбой распознавания: %s' % exc),
+                min_samples=int(RATE * 0.2))
+
+            def on_chunk(data):
+                samples = (np.frombuffer(data, dtype=np.int16)
+                           .astype(np.float32) / 32768.0)
+                for s in seg.feed(samples):
+                    worker.put(s)
+
+            raw = self._record(on_chunk)
+            ts = time.time()
+
+            # На стопе осталась только последняя открытая фраза.
+            emit('transcribing', True)
+            for s in seg.flush():
+                worker.put(s)
+            full = worker.close(timeout=180)
+            emit('transcribing', False)
 
             if len(raw) < RATE * 2 * 0.3:
                 emit('done', '')
                 return
-
-            ts = time.time()
-            emit('transcribing', True)
-            full = self._transcribe(raw)
-            emit('transcribing', False)
 
             if full:
                 _history_append(full, ts)
@@ -424,6 +438,8 @@ class Dictation(object):
                 emit('final', full, ts)
             emit('done', full)
         except Exception as exc:
+            if worker is not None:
+                worker.close(timeout=5)
             emit('transcribing', False)
             emit('error', str(exc))
             emit('done', '')
@@ -432,6 +448,9 @@ class Dictation(object):
 
     def retry(self, ts):
         def work():
+            if self.thread is not None and self.thread.is_alive():
+                emit('error', 'Идёт запись — сначала останови её')
+                return
             if not self.busy.acquire(False):
                 emit('error', 'Уже идёт распознавание')
                 return
