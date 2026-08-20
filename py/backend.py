@@ -531,8 +531,19 @@ def retry(ts):
     _engine.retry(float(ts))
 
 
+_fetch_lock = threading.Lock()
+
+
 def fetch_deps():
-    """Скачиваем модель и библиотеки по кнопке из UI, с прогрессом."""
+    """Скачиваем модель и библиотеки по кнопке из UI, с прогрессом.
+
+    Кнопка «Скачать» в QML не блокируется на время загрузки, поэтому
+    двойной тап должен быть безвредным: второй вызов не запускает
+    параллельную загрузку в те же временные пути, а просто выходит.
+    """
+    if not _fetch_lock.acquire(False):
+        return
+
     def work():
         try:
             emit('download-progress', 'подготовка', -1)
@@ -542,4 +553,6 @@ def fetch_deps():
             _engine.load()
         except Exception as exc:
             emit('download-error', str(exc))
+        finally:
+            _fetch_lock.release()
     threading.Thread(target=work, daemon=True).start()
