@@ -21,6 +21,11 @@ MainView {
     property string partialText: ""
     property bool autoCopy: true
     property real retryTs: 0
+    property bool depsMissing: false
+    property bool downloading: false
+    property string downloadStage: ""
+    property int downloadPct: -1
+    property string downloadError: ""
 
     function mmss(s) {
         var m = Math.floor(s / 60);
@@ -70,6 +75,26 @@ MainView {
 
             setHandler("status", function (s) {
                 root.statusText = "Загрузка модели…";
+            });
+            setHandler("deps-missing", function (what) {
+                root.depsMissing = true;
+                root.statusText = "Нужно скачать модель";
+            });
+            setHandler("download-progress", function (stage, pct) {
+                root.downloading = true;
+                root.downloadError = "";
+                root.downloadStage = stage;
+                root.downloadPct = pct;
+            });
+            setHandler("download-done", function () {
+                root.downloading = false;
+                root.depsMissing = false;
+                root.statusText = "Загрузка движка…";
+            });
+            setHandler("download-error", function (msg) {
+                root.downloading = false;
+                root.downloadError = msg;
+                root.statusText = "Ошибка загрузки";
             });
             setHandler("ready", function (name) {
                 root.ready = true;
@@ -331,6 +356,73 @@ MainView {
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            // Первый запуск: модели ещё нет — предлагаем скачать.
+            Rectangle {
+                anchors {
+                    top: pageHeader.bottom
+                    left: parent.left
+                    right: parent.right
+                    bottom: parent.bottom
+                }
+                color: theme.palette.normal.background
+                visible: root.depsMissing
+                z: 50
+
+                Column {
+                    anchors.centerIn: parent
+                    width: parent.width - units.gu(6)
+                    spacing: units.gu(2)
+
+                    Icon {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: units.gu(6)
+                        height: width
+                        name: "save-to"
+                    }
+                    Label {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        text: "Для работы нужно скачать модель распознавания "
+                              + "(около 500 МБ). Лучше делать это по Wi-Fi.\n"
+                              + "После загрузки приложение работает полностью офлайн."
+                    }
+                    Label {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        color: LomiriColors.red
+                        visible: root.downloadError.length > 0
+                        text: root.downloadError
+                    }
+                    ProgressBar {
+                        width: parent.width
+                        visible: root.downloading
+                        indeterminate: root.downloadPct < 0
+                        minimumValue: 0
+                        maximumValue: 100
+                        value: root.downloadPct
+                    }
+                    Label {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        visible: root.downloading
+                        textSize: Label.Small
+                        opacity: 0.7
+                        text: root.downloadStage
+                              + (root.downloadPct >= 0
+                                 ? "  " + root.downloadPct + "%" : "")
+                    }
+                    Button {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: !root.downloading
+                        color: LomiriColors.green
+                        text: root.downloadError.length ? "Повторить" : "Скачать"
+                        onClicked: py.call("backend.fetch_deps", [])
                     }
                 }
             }
