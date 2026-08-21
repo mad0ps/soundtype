@@ -95,7 +95,7 @@ ActionKey {
             holdArmed = true
             holdX = mouseX
             holdY = mouseY
-            fullScreenItem.keyFeedback()
+            fullScreenItem.dictationHoldFeedback()
         }
 
         onPressed: {

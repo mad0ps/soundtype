@@ -508,6 +508,23 @@ Item {
         }
     }
 
+    // SoundType: отчётливый вибро-рубеж «холд принят — можно отпускать».
+    // Намеренно НЕ смотрит на key-press-haptic-feedback: печать остаётся
+    // тихой, но окончание 800мс должно чувствоваться всегда.
+    HapticsEffect {
+        id: dictationHoldEffect
+        attackIntensity: 0.0
+        attackTime: 30
+        intensity: 1.0
+        duration: 90
+        fadeTime: 60
+        fadeIntensity: 0.0
+    }
+
+    function dictationHoldFeedback() {
+        dictationHoldEffect.start()
+    }
+
     // SoundType: диктовка по hold-space. Живёт на постоянном слое клавиатуры,
     // поэтому не зависит от свайп-меню и переживает его открытие/закрытие.
     function toggleDictation() {
