@@ -515,7 +515,7 @@ Item {
         id: dictationHoldEffect
         attackIntensity: 0.0
         attackTime: 30
-        intensity: 1.0
+        intensity: 0.7
         duration: 90
         fadeTime: 60
         fadeIntensity: 0.0
