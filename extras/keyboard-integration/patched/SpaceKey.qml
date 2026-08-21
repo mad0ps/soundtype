@@ -83,7 +83,7 @@ ActionKey {
                  && (fullScreenItem.dictationStatus === "recording"
                      || fullScreenItem.dictationStatus === "processing")
 
-        property real step: units.gu(0.8)
+        property real step: units.gu(1.15)
         property int bars: Math.max(8, Math.floor(width / step) + 8)
         property real slide: 0
         // скорость ленты, px/с: 3 шага за номинальный период замера 125 мс
@@ -116,19 +116,20 @@ ActionKey {
 
         Row {
             id: waveRow
-            spacing: units.gu(0.4)
+            spacing: units.gu(0.7)
             x: spaceWave.width - width + spaceWave.slide
             anchors.verticalCenter: parent.verticalCenter
 
             Repeater {
                 model: spaceWave.bars
                 delegate: Item {
-                    width: units.gu(0.4)
+                    width: units.gu(0.45)
                     height: units.gu(2.2)
                     Rectangle {
                         anchors.centerIn: parent
                         width: parent.width
                         radius: width / 2
+                        antialiasing: true
                         color: fullScreenItem.dictationMicSilent ? "gray"
                              : fullScreenItem.dictationStatus === "processing" ? "gold"
                              : "red"
