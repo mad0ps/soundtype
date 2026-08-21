@@ -40,10 +40,12 @@ class PyOtherSideMock:
             self.dbus_obj.Error("deps-missing")
             self.dbus_obj.listening = False
             self.dbus_obj.initialized = False
+            self.dbus_obj.stop_idle_timer()
         elif event == 'error':
             self.dbus_obj.Error(str(args[0]))
             self.dbus_obj.listening = False
             self.dbus_obj.pending_start = False
+            self.dbus_obj.start_idle_timer()
 
 class SoundTypeService(dbus.service.Object):
     def __init__(self, bus, path):
@@ -51,9 +53,32 @@ class SoundTypeService(dbus.service.Object):
         self.listening = False
         self.initialized = False
         self.pending_start = False
+        self.idle_timer_id = None
+
+    def start_idle_timer(self):
+        self.stop_idle_timer()
+        self.idle_timer_id = GLib.timeout_add_seconds(300, self.on_idle_timeout)
+
+    def stop_idle_timer(self):
+        if self.idle_timer_id is not None:
+            GLib.source_remove(self.idle_timer_id)
+            self.idle_timer_id = None
+
+    def on_idle_timeout(self):
+        self.idle_timer_id = None
+        if self.initialized and not self.listening:
+            print("Idle for 5 minutes, unloading model to save RAM...", flush=True)
+            try:
+                backend.unload()
+            except Exception as e:
+                print(f"Error unloading model: {e}", flush=True)
+            self.initialized = False
+        return False
 
     @dbus.service.method("com.n0madd3v0ps.soundtype", in_signature='', out_signature='')
     def ToggleDictation(self):
+        self.stop_idle_timer()
+        
         if not self.initialized:
             self.initialized = True
             self.pending_start = True
@@ -67,6 +92,7 @@ class SoundTypeService(dbus.service.Object):
         else:
             self.listening = False
             backend.stop()
+            self.start_idle_timer()
 
     @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')
     def StatusChanged(self, status):
@@ -79,10 +105,12 @@ class SoundTypeService(dbus.service.Object):
     @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')
     def TranscriptionReady(self, text):
         self.listening = False
+        self.start_idle_timer()
 
     @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')
     def Error(self, message):
         self.listening = False
+        self.start_idle_timer()
 
 DBusGMainLoop(set_as_default=True)
 bus = dbus.SessionBus()

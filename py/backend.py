@@ -295,6 +295,14 @@ class Dictation(object):
                 emit('error', 'Не удалось загрузить движок: %s' % exc)
         threading.Thread(target=work, daemon=True).start()
 
+    def unload(self):
+        import gc
+        with self.lock:
+            self.recognizer = None
+            self.vad = None
+        gc.collect()
+        emit('status', 'unloaded')
+
     # ---------- управление ----------
 
     def start(self):
@@ -534,6 +542,10 @@ def start():
 
 def stop():
     _engine.stop()
+
+
+def unload():
+    _engine.unload()
 
 
 def retry(ts):
