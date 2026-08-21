@@ -20,3 +20,4 @@ build/
 eval/corpus/
 eval/runs/
 eval/reports/
+eval/models/
