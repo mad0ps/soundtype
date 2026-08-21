@@ -7,10 +7,10 @@ only code is public. All commands run from repo root on the Mac.
     .venv/bin/python -m eval.collect
 
     # 2. decode with a model
-    .venv/bin/python -m eval.run_model --model-dir models/parakeet-int8 --name parakeet-whole --mode whole
+    .venv/bin/python -m eval.run_model --model-dir eval/models/parakeet-int8 --name parakeet-whole --mode whole
 
     # 3. compare two runs
-    .venv/bin/python -m eval.report runs/parakeet-whole.jsonl runs/gigaam-whole.jsonl
+    .venv/bin/python -m eval.report eval/runs/parakeet-whole.jsonl eval/runs/gigaam-whole.jsonl
 
 Model downloads: see "Models" section at the bottom.
 

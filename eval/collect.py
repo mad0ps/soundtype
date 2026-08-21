@@ -74,6 +74,7 @@ def main():
     if not args.no_phone:
         n = collect_phone(args.corpus_dir)
         print('phone: +%d clips' % n); total += n
+    print('added this run: %d' % total)
     print('corpus now: %d clips' % len(load_manifest(args.corpus_dir)))
 
 

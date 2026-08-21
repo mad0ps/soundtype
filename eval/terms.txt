@@ -1,4 +1,5 @@
 # domain terms checked by recall metric — extend freely
+# single words only — multi-word terms are not matched
 клод
 убунту
 терминал

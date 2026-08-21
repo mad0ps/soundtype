@@ -1,5 +1,6 @@
 import json, wave
 import numpy as np
+import pytest
 from eval.run_model import decode_corpus, read_wav
 
 def _mk_corpus(tmp_path, n=2):
@@ -23,6 +24,14 @@ def test_read_wav_scales_to_unit_float(tmp_path):
     samples = read_wav(corpus / 'clip0.wav')
     assert samples.dtype == np.float32
     assert abs(float(samples[0]) - 1000 / 32768.0) < 1e-6
+
+def test_read_wav_rejects_wrong_sample_width(tmp_path):
+    path = tmp_path / 'bad.wav'
+    with wave.open(str(path), 'wb') as w:
+        w.setnchannels(1); w.setsampwidth(1); w.setframerate(16000)  # 8-bit, not s16
+        w.writeframes(np.full(1600, 200, dtype=np.uint8).tobytes())
+    with pytest.raises(ValueError):
+        read_wav(path)
 
 def test_decode_corpus_writes_run_file(tmp_path):
     corpus = _mk_corpus(tmp_path)

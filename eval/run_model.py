@@ -19,7 +19,8 @@ MIN_SILENCE = 1.0  # mirrors py/backend.py prod segmentation
 
 def read_wav(path):
     with wave.open(str(path), 'rb') as w:
-        assert w.getframerate() == 16000 and w.getnchannels() == 1
+        if w.getframerate() != 16000 or w.getnchannels() != 1 or w.getsampwidth() != 2:
+            raise ValueError('expected 16kHz mono s16 WAV: %s' % path)
         raw = w.readframes(w.getnframes())
     return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
@@ -74,6 +75,9 @@ def vad_decode_fn(recognizer):
         cfg.silero_vad.model = VAD_MODEL
         cfg.silero_vad.min_silence_duration = MIN_SILENCE
         cfg.sample_rate = 16000
+        # prod (py/backend.py) uses VAD_BUFFER_SECONDS=120; eval uses 300s so a
+        # single whole-clip decode fits without wrapping — >300s of speech in one
+        # clip would wrap the ring buffer and lose audio.
         vad = sherpa_onnx.VoiceActivityDetector(cfg, buffer_size_in_seconds=300)
         window = cfg.silero_vad.window_size
         parts = []

@@ -35,12 +35,20 @@ def build_report(corpus_dir, run_paths, terms_path):
             refs[e['id']] = f.read().strip()
     runs = [_load_run(p) for p in run_paths]
     ids = [e['id'] for e in entries if all(e['id'] in h for _, h in runs)]
+    if not ids:
+        raise SystemExit('no clips covered by all runs — refusing to render an empty report')
     terms = load_terms(terms_path)
 
     lines = ['# Eval report — %s' % datetime.date.today().isoformat(),
              '', 'Corpus: %d clips scored (%d in manifest), verified refs: %d' % (
                  len(ids), len(entries),
-                 sum(1 for e in entries if e.get('verified'))), '']
+                 sum(1 for e in entries if e.get('verified')))]
+    if len(ids) < len(entries):
+        for label, hyps in runs:
+            missing = sum(1 for e in entries if e['id'] not in hyps)
+            lines.append('excluded from scoring: %d clips (ids not present in %s)' % (
+                missing, label))
+    lines.append('')
     lines.append('| run | WER | mean CER |')
     lines.append('|---|---|---|')
     for label, hyps in runs:
@@ -83,7 +91,7 @@ def main():
     md = build_report(args.corpus_dir, args.runs, TERMS)
     out = args.out or os.path.join(
         REPORTS_DIR, datetime.datetime.now().strftime('%Y%m%d-%H%M') + '.md')
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
     with open(out, 'w', encoding='utf-8') as f:
         f.write(md)
     print(md)
