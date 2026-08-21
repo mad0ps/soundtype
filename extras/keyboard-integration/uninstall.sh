@@ -20,5 +20,11 @@ done
 sync
 mount -o remount,ro / || echo "WARNING: could not remount / read-only (harmless, reboot restores it)"
 
-pkill -f maliit-server || true
+# restart the keyboard via systemd: after a plain pkill it only respawns on
+# input focus, which never comes on the lockscreen — leaving the user unable
+# to type the passphrase
+sudo -u phablet bash -c "
+    export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+    systemctl --user restart maliit-server
+" || pkill -f maliit-server || true
 echo "OK: stock keyboard restored."
