@@ -2,6 +2,7 @@ import QtQuick 2.9
 import QtQuick.Layouts 1.3
 import Lomiri.Components 1.3
 import io.thp.pyotherside 1.5
+import QtSystemInfo 5.5
 
 MainView {
     id: root
@@ -12,6 +13,9 @@ MainView {
     height: units.gu(78)
 
     property bool recording: false
+
+    // не гасить экран, пока идёт запись (issue #5)
+    ScreenSaver { screenSaverEnabled: !root.recording }
     property bool ready: false
     property string statusText: "Загрузка движка…"
     property real level: 0.0

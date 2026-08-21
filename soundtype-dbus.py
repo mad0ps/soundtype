@@ -64,6 +64,34 @@ class SoundTypeService(dbus.service.Object):
         self.loaded = False
         self.pending_start = False
         self.idle_timer_id = None
+        self.display_cookie = None
+
+    # repowerd держит экран включённым, пока живёт cookie; при падении
+    # процесса cookie снимается автоматически (привязан к D-Bus соединению)
+    def keep_display_on(self):
+        if self.display_cookie is not None:
+            return
+        try:
+            proxy = dbus.SystemBus().get_object(
+                'com.canonical.Unity.Screen', '/com/canonical/Unity/Screen')
+            self.display_cookie = int(proxy.keepDisplayOn(
+                dbus_interface='com.canonical.Unity.Screen'))
+            print(f"display-on acquired (cookie={self.display_cookie})", flush=True)
+        except Exception as exc:
+            print(f"display-on acquire failed: {exc}", flush=True)
+
+    def release_display_on(self):
+        if self.display_cookie is None:
+            return
+        cookie, self.display_cookie = self.display_cookie, None
+        try:
+            proxy = dbus.SystemBus().get_object(
+                'com.canonical.Unity.Screen', '/com/canonical/Unity/Screen')
+            proxy.removeDisplayOnRequest(
+                cookie, dbus_interface='com.canonical.Unity.Screen')
+            print(f"display-on released (cookie={cookie})", flush=True)
+        except Exception as exc:
+            print(f"display-on release failed: {exc}", flush=True)
 
     def start_idle_timer(self):
         self.stop_idle_timer()
@@ -91,6 +119,7 @@ class SoundTypeService(dbus.service.Object):
         self.stop_idle_timer()
         if not self.listening:
             self.listening = True
+            self.keep_display_on()
             if not self.loaded:
                 self.loaded = True
                 self.pending_start = True
@@ -100,6 +129,7 @@ class SoundTypeService(dbus.service.Object):
         else:
             self.listening = False
             self.pending_start = False
+            self.release_display_on()
             backend.stop()
             self.start_idle_timer()
 
@@ -118,11 +148,13 @@ class SoundTypeService(dbus.service.Object):
     @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')
     def TranscriptionReady(self, text):
         self.listening = False
+        self.release_display_on()
         self.start_idle_timer()
 
     @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')
     def Error(self, message):
         self.listening = False
+        self.release_display_on()
         self.start_idle_timer()
 
 DBusGMainLoop(set_as_default=True)
