@@ -39,7 +39,6 @@ ActionKey {
         font.family: UI.fontFamily
         font.weight: Font.Light
         font.pixelSize: parent.fontSize * 0.6
-        opacity: UI.spaceOpacity
         text: Languages.languageIdToName(maliit_input_method.activeLanguage)
         horizontalAlignment: Text.AlignHCenter
         visible: !panel.hideKeyLabels
