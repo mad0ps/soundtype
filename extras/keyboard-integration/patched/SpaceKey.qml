@@ -46,8 +46,9 @@ ActionKey {
     }
 
     // SoundType: индикатор диктовки в левой части пробела (справа его
-    // закрывает палец при холде); серый = готов, красный пульс = запись,
-    // оранжевый = расшифровка
+    // закрывает палец при холде); серый = движок не в памяти, зелёный =
+    // готов (движок загружен), красный пульс = запись, жёлтый = занят
+    // (загрузка движка или расшифровка)
     Icon {
         id: micIndicator
         name: "audio-input-microphone-symbolic"
@@ -58,7 +59,8 @@ ActionKey {
         anchors.leftMargin: units.gu(1)
         visible: !panel.hideKeyLabels
         color: fullScreenItem.dictationStatus === "recording" ? "red"
-             : fullScreenItem.dictationStatus === "processing" ? "orange"
+             : fullScreenItem.dictationStatus === "processing" ? "gold"
+             : fullScreenItem.dictationStatus === "ready" ? "limegreen"
              : "gray"
         SequentialAnimation on opacity {
             running: fullScreenItem.dictationStatus === "recording"

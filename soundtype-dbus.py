@@ -36,9 +36,12 @@ class PyOtherSideMock:
             else:
                 svc.StatusChanged("ready")
         elif event == 'status':
-            # 'loading' при (пере)загрузке движка — индикатору «занят»
+            # 'loading' при (пере)загрузке движка — индикатору «занят»;
+            # 'unloaded' после idle-выгрузки — индикатору «серый»
             if args and args[0] == 'loading':
                 svc.StatusChanged("processing")
+            elif args and args[0] == 'unloaded':
+                svc.StatusChanged("unloaded")
         elif event == 'ready':
             svc.StatusChanged("ready")
             # движок догрузился после hold — запускаем отложенную запись

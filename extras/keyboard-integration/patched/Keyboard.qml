@@ -57,7 +57,7 @@ Item {
     property var theme: Theme.defaultTheme
 
     // SoundType: состояние диктовки (индикатор читает SpaceKey.qml)
-    property string dictationStatus: "ready"
+    property string dictationStatus: "unloaded"
     property string dictationQueue: ""
 
     property variant input_method: maliit_input_method

@@ -83,7 +83,8 @@ RowLayout {
         Rectangle {
             anchors.fill: parent
             color: fullScreenItem.dictationStatus === "recording" ? "red"
-                 : fullScreenItem.dictationStatus === "processing" ? "orange"
+                 : fullScreenItem.dictationStatus === "processing" ? "gold"
+                 : fullScreenItem.dictationStatus === "ready" ? "limegreen"
                  : "transparent"
             opacity: 0.3
             radius: units.gu(0.5)
