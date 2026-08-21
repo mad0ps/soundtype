@@ -66,81 +66,63 @@ ActionKey {
         opacity: 0.9
     }
 
-    // SoundType: волна-история — непрерывный конвейер. Высоты баров не
-    // анимируются: лента физически ползёт влево с постоянной скоростью
-    // (линейный слайд на 4 шага за период замера, 32 бара/сек), новые бары
-    // заезжают из-за правого края под клипом. Так нет степ-энд-гоу.
-    Item {
+    // SoundType: стационарный эквалайзер — бары НЕ движутся по горизонтали,
+    // каждый стоит на месте и дышит от громкости (общая огибающая) со своим
+    // коэффициентом и лёгким собственным колыханием, чтобы ряд не был
+    // синхронным. В тишине — ряд кружочков.
+    Row {
         id: spaceWave
-        clip: true
+        spacing: units.gu(0.7)
         anchors.verticalCenter: micIndicator.verticalCenter
         anchors.left: micIndicator.right
         anchors.leftMargin: units.gu(0.8)
         anchors.right: parent.right
         anchors.rightMargin: units.gu(1)
-        height: units.gu(2.2)
         visible: micIndicator.visible
                  && (fullScreenItem.dictationStatus === "recording"
                      || fullScreenItem.dictationStatus === "processing")
+        property real barW: units.gu(0.45)
+        property int bars: Math.max(6, Math.floor((width + spacing) / (barW + spacing)))
 
-        property real step: units.gu(1.15)
-        property int bars: Math.max(8, Math.floor(width / step) + 8)
-        property real slide: 0
-        // скорость ленты, px/с: 3 шага за номинальный период замера 125 мс
-        property real beltSpeed: 3 * step / 0.125
+        Repeater {
+            model: spaceWave.bars
+            delegate: Item {
+                width: spaceWave.barW
+                height: units.gu(2.2)
 
-        // Замеры приходят с джиттером (аудио-цикл + D-Bus). Сброс к
-        // фиксированному отступу давал рывок; вместо этого остаток пути
-        // НАКАПЛИВАЕТСЯ, а длительность анимации считается из постоянной
-        // скорости — лента едет ровно при любом дрожании таймингов.
-        Connections {
-            target: fullScreenItem
-            onDictationWaveChanged: {
-                waveSlideAnim.stop();
-                var s = spaceWave.slide + 3 * spaceWave.step;
-                var cap = 6 * spaceWave.step;
-                if (s > cap) s = cap;   // не даём очереди разгоняться
-                spaceWave.slide = s;
-                waveSlideAnim.duration = 1000 * s / spaceWave.beltSpeed;
-                waveSlideAnim.restart();
-            }
-        }
+                // статичный «характер» бара + собственное медленное колыхание
+                property real gain: 0.55 + 0.45 * Math.abs(Math.sin((index + 1) * 2.399))
+                property real sway: 0.0
 
-        NumberAnimation {
-            id: waveSlideAnim
-            target: spaceWave
-            property: "slide"
-            to: 0
-            easing.type: Easing.Linear
-        }
+                SequentialAnimation on sway {
+                    running: spaceWave.visible && !fullScreenItem.dictationMicSilent
+                    loops: Animation.Infinite
+                    NumberAnimation {
+                        from: 0.0; to: 1.0
+                        duration: 240 + (index * 83) % 170
+                        easing.type: Easing.InOutSine
+                    }
+                    NumberAnimation {
+                        from: 1.0; to: 0.0
+                        duration: 240 + (index * 83) % 170
+                        easing.type: Easing.InOutSine
+                    }
+                }
 
-        Row {
-            id: waveRow
-            spacing: units.gu(0.7)
-            x: spaceWave.width - width + spaceWave.slide
-            anchors.verticalCenter: parent.verticalCenter
-
-            Repeater {
-                model: spaceWave.bars
-                delegate: Item {
-                    width: units.gu(0.45)
-                    height: units.gu(2.2)
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: parent.width
-                        radius: width / 2
-                        antialiasing: true
-                        color: fullScreenItem.dictationMicSilent ? "gray"
-                             : fullScreenItem.dictationStatus === "processing" ? "gold"
-                             : "red"
-                        height: {
-                            var arr = fullScreenItem.dictationWave;
-                            var i = arr.length - spaceWave.bars + index;
-                            var v = i >= 0 ? arr[i] : 0.0;
-                            // минимум = ширина бара: в тишине идеальный кружок
-                            return Math.max(parent.width,
-                                            parent.height * Math.min(1.0, v));
-                        }
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: parent.width
+                    radius: width / 2
+                    antialiasing: true
+                    color: fullScreenItem.dictationMicSilent ? "gray"
+                         : fullScreenItem.dictationStatus === "processing" ? "gold"
+                         : "red"
+                    height: Math.max(parent.width,
+                                     parent.height * Math.min(1.0,
+                                         fullScreenItem.dictationEnvelope
+                                         * gain * (0.6 + 0.4 * sway)))
+                    Behavior on height {
+                        NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
                     }
                 }
             }
