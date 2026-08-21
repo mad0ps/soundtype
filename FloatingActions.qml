@@ -21,6 +21,27 @@ RowLayout {
     property string typeQueue: ""
     property bool pendingExit: false
 
+    // Пока идёт запись/распознавание/печать — свайп-меню не имеет права
+    // закрыться по таймауту, кто бы ни рестартил таймер в стоковом коде.
+    readonly property bool dictationBusy: dictationButton.status === "recording"
+                                          || dictationButton.status === "processing"
+                                          || typeQueue.length > 0
+
+    onDictationBusyChanged: {
+        if (!dictationBusy && !pendingExit) {
+            fullScreenItem.timerSwipe.restart();
+        }
+    }
+
+    Connections {
+        target: fullScreenItem.timerSwipe
+        onRunningChanged: {
+            if (fullScreenItem.timerSwipe.running && root.dictationBusy) {
+                fullScreenItem.timerSwipe.stop();
+            }
+        }
+    }
+
     Timer {
         id: typewriter
         interval: 18
