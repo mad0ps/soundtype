@@ -101,7 +101,7 @@ ActionKey {
                         return units.gu(2.2) * Math.max(0.09, Math.min(1.0, v));
                     }
                     Behavior on height {
-                        NumberAnimation { duration: 110 }
+                        NumberAnimation { duration: 55 }
                     }
                 }
             }
