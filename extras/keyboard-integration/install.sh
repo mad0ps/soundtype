@@ -29,5 +29,15 @@ rm -f "$KB/FloatingActions.qml.bak"
 sync
 mount -o remount,ro / || echo "WARNING: could not remount / read-only (harmless, reboot restores it)"
 
+echo "Installing and restarting soundtype-daemon.service for user phablet..."
+sudo -u phablet bash -c "
+    mkdir -p ~/.config/systemd/user/
+    cp '$DIR/../../soundtype-daemon.service' ~/.config/systemd/user/
+    export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+    systemctl --user daemon-reload
+    systemctl --user enable soundtype-daemon.service
+    systemctl --user restart soundtype-daemon.service
+"
+
 pkill -f maliit-server || true
 echo "OK: installed. The keyboard restarts on next focus; hold space (no movement) toggles dictation."
