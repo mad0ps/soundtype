@@ -301,6 +301,13 @@ class Dictation(object):
             self.recognizer = None
             self.vad = None
         gc.collect()
+        # glibc не отдаёт освобождённую кучу ОС сам — без trim RSS остаётся
+        # сотни МБ после выгрузки модели
+        try:
+            import ctypes
+            ctypes.CDLL('libc.so.6').malloc_trim(0)
+        except Exception:
+            pass
         emit('status', 'unloaded')
 
     # ---------- управление ----------
