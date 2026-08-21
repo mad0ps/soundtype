@@ -22,8 +22,8 @@ mount -o remount,rw /
 install -m 644 "$DIR/patched/Keyboard.qml" "$KB/Keyboard.qml"
 install -m 644 "$DIR/patched/SpaceKey.qml" "$KB/keys/SpaceKey.qml"
 
-# dictation moved out of the swipe menu — restore stock FloatingActions
-install -m 644 "$DIR/stock/FloatingActions.qml" "$KB/FloatingActions.qml"
+[ -f "$KB/FloatingActions.qml.stock" ] || cp "$KB/FloatingActions.qml" "$KB/FloatingActions.qml.stock"
+install -m 644 "$DIR/patched/FloatingActions.qml" "$KB/FloatingActions.qml"
 rm -f "$KB/FloatingActions.qml.bak"
 
 sync

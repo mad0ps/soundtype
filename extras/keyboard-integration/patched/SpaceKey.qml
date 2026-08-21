@@ -45,16 +45,17 @@ ActionKey {
         visible: !panel.hideKeyLabels
     }
 
-    // SoundType: индикатор диктовки у надписи языка
-    // серый = готов, красный пульс = запись, оранжевый = расшифровка
+    // SoundType: индикатор диктовки в левой части пробела (справа его
+    // закрывает палец при холде); серый = готов, красный пульс = запись,
+    // оранжевый = расшифровка
     Icon {
         id: micIndicator
         name: "audio-input-microphone-symbolic"
-        width: units.gu(1.5)
+        width: units.gu(2)
         height: width
         anchors.verticalCenter: langLabel.verticalCenter
-        anchors.left: langLabel.right
-        anchors.leftMargin: units.gu(0.5)
+        anchors.left: parent.left
+        anchors.leftMargin: units.gu(1)
         visible: !panel.hideKeyLabels
         color: fullScreenItem.dictationStatus === "recording" ? "red"
              : fullScreenItem.dictationStatus === "processing" ? "orange"
@@ -62,11 +63,11 @@ ActionKey {
         SequentialAnimation on opacity {
             running: fullScreenItem.dictationStatus === "recording"
             loops: Animation.Infinite
-            onRunningChanged: if (!running) micIndicator.opacity = UI.spaceOpacity
+            onRunningChanged: if (!running) micIndicator.opacity = 0.9
             NumberAnimation { from: 1.0; to: 0.2; duration: 400 }
             NumberAnimation { from: 0.2; to: 1.0; duration: 400 }
         }
-        opacity: UI.spaceOpacity
+        opacity: 0.9
     }
 
     MouseArea {
@@ -109,6 +110,10 @@ ActionKey {
             }
             if (fullScreenItem.cursorSwipe) {
                 fullScreenItem.timerSwipe.restart()
+            } else if (fullScreenItem.dictationStatus === "recording") {
+                // короткий тап во время записи = стоп диктовки, пробел не печатаем
+                spaceKey.currentlyPressed = false
+                fullScreenItem.toggleDictation()
             } else {
                 spaceKey.currentlyPressed = false
                 event_handler.onKeyReleased("", "space")

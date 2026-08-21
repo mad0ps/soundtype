@@ -8,7 +8,7 @@ KB=/usr/share/maliit/plugins/lomiri-keyboard
 
 mount -o remount,rw /
 
-for pair in "$KB/Keyboard.qml" "$KB/keys/SpaceKey.qml"; do
+for pair in "$KB/Keyboard.qml" "$KB/keys/SpaceKey.qml" "$KB/FloatingActions.qml"; do
     if [ -f "$pair.stock" ]; then
         mv "$pair.stock" "$pair"
         echo "restored: $pair"
