@@ -1,202 +1,210 @@
+[🇬🇧 English](README.md) | [🇷🇺 Русский](README.ru.md)
+
 # SoundType
 
-Офлайн-диктовка для Ubuntu Touch. Говоришь — получаешь текст напрямую в поле ввода через системную клавиатуру!
+Offline dictation for Ubuntu Touch. Speak — and the text lands straight in the input field through the system keyboard!
 
-Распознавание целиком на телефоне: ни одного байта наружу, ни облаков, ни ключей, ни интернета. Работает в самолётном режиме.
+Recognition happens entirely on the phone: not a single byte leaves the device — no clouds, no API keys, no internet. Works in airplane mode.
 
-**Статус:** рабочая версия 0.8.0 для Ubuntu Touch 24.04 (noble); для UT 20.04 остаётся [релиз 0.6.0](https://github.com/mad0ps/soundtype/releases/tag/v0.6.0). Не в OpenStore — ставится из исходников, см. [Установку](#установка).
-
----
-
-## Как этим пользуешься
-
-### Способ 1: Системная клавиатура (рекомендуемый)
-
-После установки интеграции (см. ниже) диктовка живёт прямо в клавиатуре:
-
-1. **Зажимаешь пробел** (~0.8 с), не двигая палец — короткая вибрация скажет
-   «принято». Отпускаешь — пошла запись: микрофон слева на пробеле пульсирует
-   красным, распознанные фразы **печатаются в поле прямо по ходу речи**.
-2. **Короткий тап по пробелу** — стоп (пробел при этом не печатается).
-   Жёлтый микрофон = дорасшифровывается хвост.
-3. Микрофон в свайп-меню (свайп вверх по клавиатуре) делает то же самое.
-
-Цвета микрофона: **серый** — движок не в памяти (первый старт подождёт ~5 с),
-**жёлтый** — грузится или расшифровывает, **красный пульс** — запись,
-**зелёный** — движок в памяти, старт мгновенный. После 5 минут простоя движок
-сам выгружается из памяти.
-
-Стоковый тачпад никуда не делся: зажал пробел и **повёл палец** — управляешь
-курсором, как в обычной клавиатуре UT.
-
-### Способ 2: Через графическое приложение
-1. Жмёшь зелёную кнопку в приложении — идёт запись.
-2. Говоришь сколько угодно. Жмёшь красную — текст сохраняется в буфер обмена.
-3. Переходишь в любое приложение и вставляешь текст.
-
-Расшифровка занимает примерно четверть длительности записи: минута речи
-считается секунд пятнадцать (Snapdragon 690, четыре потока).
-
-### Почему декод в отдельном потоке
-
-Это главное архитектурное решение, и оно не косметическое. Цикл чтения
-микрофона делает только лёгкий VAD (режет звук на фразы) и складывает байты
-в память — тяжёлый декод Parakeet вынесен в отдельный поток и работает по
-готовым фразам параллельно записи, не внутри этого цикла.
-
-В ранней версии было иначе: распознавание звалось прямо из цикла чтения, на
-каждой паузе. Цикл замирал на секунду с лишним, буфер PulseAudio
-переполнялся, и живая речь **терялась**. Длинные сообщения приходили
-обрезанными. Урок остался в силе и определяет архитектуру 0.6: тяжёлая
-работа никогда не встаёт в сам цикл чтения. Подробности — в
-`docs/DECISIONS.md`.
-
-### История
-
-Каждая расшифровка сохраняется в `history.jsonl` с отметкой времени. Тап по
-записи копирует её заново.
-
-Для последних 20 записей сохраняется и сам звук — у них появляется кнопка
-повторного распознавания. Полезно, когда первый заход сорвался: не хватило
-памяти, приложение свернули, распознавание оборвалось. Модель
-детерминированная, поэтому на исправном звуке повтор даст тот же результат —
-это не «попробовать ещё раз, вдруг лучше».
-
-Минута речи занимает около 2 МБ, старые записи удаляются автоматически.
+**Status:** working release 0.8.0 for Ubuntu Touch 24.04 (noble); for UT 20.04 use [release 0.6.0](https://github.com/mad0ps/soundtype/releases/tag/v0.6.0). Not in the OpenStore yet — installed from source, see [Installation](#installation).
 
 ---
 
-## Требования
+## How you use it
+
+### Way 1: The system keyboard (recommended)
+
+Once the integration is installed (see below), dictation lives right in the keyboard:
+
+1. **Hold the space bar** (~0.8 s) without moving your finger — a short
+   vibration says "armed". Release — recording starts: the mic on the left
+   side of the space bar comes alive, and recognized phrases are **typed into
+   the field as you speak**.
+2. **A short tap on space** stops the recording (no space character is
+   typed). A yellow mic means the tail is still being transcribed.
+3. The mic button in the swipe menu (swipe up on the keyboard) does the same.
+
+Mic colors: **gray** — engine not in memory (the first start takes ~5 s),
+**yellow** — loading or transcribing, **pulsing red** — recording,
+**green** — engine loaded, instant start. After 5 idle minutes the engine
+unloads itself from memory.
+
+The stock cursor touchpad still works: hold space and **move your finger**
+to drive the cursor, exactly like the stock UT keyboard.
+
+### Way 2: The app
+1. Tap the green button — recording starts.
+2. Speak as long as you like. Tap the red button — the text is copied to the
+   clipboard.
+3. Switch to any app and paste.
+
+Transcription takes roughly a quarter of the recording length: a minute of
+speech decodes in about fifteen seconds (Snapdragon 690, four threads).
+
+### Why decoding lives in a separate thread
+
+This is the core architectural decision, and it is not cosmetic. The
+microphone loop only runs a light VAD (splits speech into phrases) and stores
+bytes in memory — the heavy Parakeet decode runs in a separate thread over
+finished phrases, in parallel with the recording, never inside the loop.
+
+An early version did it the other way: recognition was called from the read
+loop on every pause. The loop froze for over a second, the PulseAudio buffer
+overflowed, and live speech **was lost**. Long messages arrived truncated.
+That lesson still shapes the architecture: heavy work never blocks the read
+loop. Details in `docs/DECISIONS.md`.
+
+### History
+
+Every transcription is saved to `history.jsonl` with a timestamp. Tapping an
+entry copies it again.
+
+For the last 20 recordings the audio is kept too — those entries get a
+re-transcribe button. Useful when the first attempt failed: out of memory,
+app minimized, recognition interrupted. The model is deterministic, so on
+healthy audio a retry gives the same result — it is not "try again for luck".
+
+A minute of speech takes about 2 MB; old recordings are deleted
+automatically.
+
+---
+
+## Requirements
 
 | | |
 |---|---|
-| Система | Ubuntu Touch 24.04 (noble), arm64 — для 20.04 бери [v0.6.0](https://github.com/mad0ps/soundtype/releases/tag/v0.6.0) |
-| Место | ~1.5 ГБ: модель 660 МБ, библиотеки 130 МБ |
-| Память | ~1.1 ГБ при загруженном движке; клавиатурный демон в простое — десятки МБ (движок выгружается через 5 минут) |
-| Компилятор | **не нужен** — и модель, и библиотеки ставятся готовыми сборками |
+| System | Ubuntu Touch 24.04 (noble), arm64 — for 20.04 use [v0.6.0](https://github.com/mad0ps/soundtype/releases/tag/v0.6.0) |
+| Disk | ~1.5 GB: 660 MB model, 130 MB libraries |
+| Memory | ~1.1 GB with the engine loaded; the keyboard daemon idles at tens of MB (the engine unloads after 5 minutes) |
+| Compiler | **not needed** — both the model and the libraries ship as prebuilt binaries |
 
-## Установка
+## Installation
 
 ```sh
 git clone https://github.com/mad0ps/soundtype.git
 cd soundtype
 
-./scripts/build.sh              # собирает click-пакет
-./scripts/install.sh            # ставит в систему
+./scripts/build.sh              # builds the click package
+./scripts/install.sh            # installs it into the system
 ```
 
-При первом запуске приложение само предложит скачать модель (~500 МБ, лучше
-по Wi-Fi). Вручную то же самое делает `python3 scripts/fetch-deps.py`.
-Разрешение `networking` в apparmor нужно только для этой загрузки —
-распознавание полностью офлайн, звук никуда не уходит.
+On first launch the app offers to download the model (~500 MB, Wi-Fi
+recommended). `python3 scripts/fetch-deps.py` does the same thing manually.
+The `networking` apparmor permission exists only for this download —
+recognition is fully offline, audio never leaves the device.
 
-> `pkcon install-local` здесь не работает в принципе — бэкенд PackageKit на
-> Ubuntu Touch это `aptcc`, он понимает только `.deb`. Установкой click-пакетов
-> занимается служба `com.lomiri.click`, её и вызывает `install.sh`.
+> `pkcon install-local` cannot work here in principle — the PackageKit
+> backend on Ubuntu Touch is `aptcc`, which only understands `.deb`. Click
+> packages are installed by the `com.lomiri.click` service, which is exactly
+> what `install.sh` calls.
 
 ---
 
-## Нативная интеграция в клавиатуру (режим демона)
+## Native keyboard integration (daemon mode)
 
-SoundType встраивается в системную клавиатуру Maliit: жест hold-space,
-кнопка в свайп-меню, индикатор состояния на пробеле.
+SoundType embeds into the Maliit system keyboard: the hold-space gesture,
+a mic button in the swipe menu, and a live indicator on the space bar.
 
-### Как это работает:
-1. **D-Bus демон** `soundtype-dbus.py` — пользовательский сервис systemd,
-   слушает `com.n0madd3v0ps.soundtype`. Движок грузит лениво и выгружает
-   после 5 минут простоя (порог — env `SOUNDTYPE_IDLE_UNLOAD`, секунд).
-2. **QML-мост**: внутри клавиатуры через `io.thp.pyotherside` крутится
-   `py/soundtype_dbus_listener.py`, транслирующий сигналы демона в QML.
-3. **Патчи клавиатуры** (`Keyboard.qml`, `keys/SpaceKey.qml`,
-   `FloatingActions.qml`): жест, «машинистка» — посимвольная печать через
-   `event_handler.onKeyReleased`, индикатор, кнопка в свайп-меню.
+### How it works:
+1. **The D-Bus daemon** `soundtype-dbus.py` is a systemd user service
+   listening on `com.n0madd3v0ps.soundtype`. It loads the engine lazily and
+   unloads it after 5 idle minutes (threshold: the `SOUNDTYPE_IDLE_UNLOAD`
+   env var, in seconds).
+2. **The QML bridge**: `py/soundtype_dbus_listener.py` runs inside the
+   keyboard via `io.thp.pyotherside` and relays daemon signals into QML.
+3. **Keyboard patches** (`Keyboard.qml`, `keys/SpaceKey.qml`,
+   `FloatingActions.qml`): the gesture, the "typewriter" (character-by-
+   character insertion through `event_handler.onKeyReleased`), the
+   voice-reactive indicator, the swipe-menu button.
 
-### Как установить:
+### Installing:
 
-**Внимание: установка патчит системный раздел — на свой страх и риск. Патч
-слетает при каждом OTA-обновлении: после OTA просто запусти install.sh ещё раз.**
+**Warning: this patches the system partition — use at your own risk. An OTA
+update overwrites the patch: just re-run install.sh after each OTA.**
 
-Одна команда на телефоне (бекапы стоковых файлов, systemd-юнит демона и
-перезапуск клавиатуры скрипт делает сам):
+One command on the phone (stock-file backups, the daemon's systemd unit and
+keyboard restarts are all handled by the script):
 
 ```sh
 sudo bash extras/keyboard-integration/install.sh
 ```
 
-Откат: `sudo bash extras/keyboard-integration/uninstall.sh` (возвращает сток
-из бекапов).
+Rollback: `sudo bash extras/keyboard-integration/uninstall.sh` (restores
+stock files from backups).
 
-Детали и список файлов — в
+Details and the file list:
 [`extras/keyboard-integration/README.md`](extras/keyboard-integration/README.md).
 
 ---
 
-## Разработка
+## Development
 
-Правишь `qml/Main.qml` или `py/backend.py`, потом:
+Edit `qml/Main.qml` or `py/backend.py`, then:
 
 ```sh
 ./scripts/build.sh && ./scripts/install.sh
 ```
 
-Приложение перед установкой лучше закрыть, иначе останется работать старая
-версия. Посмотреть, что оно пишет в журнал:
+Close the app before installing, otherwise the old version keeps running.
+Watching the logs:
 
 ```sh
 journalctl -f | grep -i soundtype
 ```
 
-### С ноутбука, с доставкой на телефон
+### From a laptop, deploying to the phone
 
-Собирать можно и не на устройстве. Телефон подключается по USB, `adb` из
+You can build off-device too. The phone connects over USB, `adb` from the
 Android SDK:
 
 ```sh
-# собрать пакет локально (click нужен только для сборки)
+# build the package locally (click is only needed for building)
 ./scripts/build.sh
 
-# доставить и поставить
+# deliver and install
 adb push build/*.click /home/phablet/
 adb shell "gdbus call --system --dest com.lomiri.click \
     --object-path /com/lomiri/click --method com.lomiri.click.Install \
     /home/phablet/$(basename build/*.click)"
 ```
 
-Модель и библиотеки должны быть на **телефоне** — `fetch-deps.py` запускается
-там, один раз.
+The model and libraries must live on the **phone** — `fetch-deps.py` runs
+there, once.
 
-Стандартный инструмент разработки под Ubuntu Touch — `clickable`: собирает в
-докере и заливает по USB. Наши скрипты ему не мешают, они просто про сборку
-на самом устройстве.
+The standard Ubuntu Touch development tool is `clickable`: it builds in
+Docker and deploys over USB. Our scripts don't conflict with it — they just
+build on the device itself.
 
-### Документация
+### Documentation
 
-* [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — как устроено внутри, обмен
-  между QML и Python, что где лежит на диске
-* [`docs/DECISIONS.md`](docs/DECISIONS.md) — почему выбрано именно так: модель,
-  порядок работы, хранение. С отвергнутыми вариантами и причинами
-* [`CHANGELOG.md`](CHANGELOG.md) — что менялось от версии к версии
+* [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — internals, QML↔Python
+  interchange, what lives where on disk
+* [`docs/DECISIONS.md`](docs/DECISIONS.md) — why it is built this way: the
+  model, the processing order, storage. With rejected alternatives
+* [`docs/ROADMAP.md`](docs/ROADMAP.md) — the development plan (also tracked
+  as [issues](https://github.com/mad0ps/soundtype/issues) and
+  [milestones](https://github.com/mad0ps/soundtype/milestones))
+* [`CHANGELOG.md`](CHANGELOG.md) — what changed between versions
 
 ---
 
-## Что не доделано
+## Known limitations
 
-* **В графическом приложении** модель остаётся в памяти, пока приложение
-  открыто (~1 ГБ). Клавиатурный демон выгружает её после 5 минут простоя,
-  приложение — пока нет.
-* **AppArmor не пускает `onnxruntime`** к `/sys/devices/system/cpu/*`, поэтому он
-  не определяет возможности процессора и считает медленнее, чем мог бы. В
-  журнале это `Unknown CPU vendor`.
-* **Нет автоповтора при сбое** распознавания одной фразы — она просто теряется,
-  в лог пишется ошибка.
-* **Не в OpenStore.** Размер модели там не проблема — докачка идёт из самого
-  приложения при первом запуске. Но при обрыве связи скачивание начинается
-  заново, докачки нет. Сама публикация в каталог не сделана.
+* **In the app** the model stays in memory while the app is open (~1 GB).
+  The keyboard daemon unloads it after 5 idle minutes; the app does not yet.
+* **AppArmor blocks `onnxruntime`** from `/sys/devices/system/cpu/*`, so it
+  cannot detect CPU capabilities and decodes slower than it could. In the
+  log this shows as `Unknown CPU vendor`.
+* **No automatic retry** when a single phrase fails to decode — it is
+  dropped and an error is logged.
+* **Not in the OpenStore.** The model size is not a problem there — the app
+  downloads it on first launch. But an interrupted download restarts from
+  scratch, and the store submission itself has not been done yet.
 
-## Лицензия
+## License
 
-GPL-3.0, см. [LICENSE](LICENSE).
+GPL-3.0, see [LICENSE](LICENSE).
 
-В `extras/` лежат `keyboard-integration/` (интеграция в системную клавиатуру,
-см. выше) и правки для `terminal.ubports`, которые понадобились по ходу
-работы. Подробности — в самих файлах.
+`extras/` also contains things unrelated to the app: patches for
+`terminal.ubports` that came up along the way. Details in the files
+themselves.
