@@ -17,6 +17,27 @@ RowLayout {
         topMargin: toolbar.height + units.gu(1)
     }
 
+    // «Машинистка»: печатаем распознанные фразы посимвольно, как живой набор
+    property string typeQueue: ""
+    property bool pendingExit: false
+
+    Timer {
+        id: typewriter
+        interval: 18
+        repeat: true
+        running: root.typeQueue.length > 0
+        onTriggered: {
+            if (root.typeQueue.length > 0) {
+                event_handler.onKeyReleased(root.typeQueue.charAt(0));
+                root.typeQueue = root.typeQueue.substring(1);
+            }
+            if (root.typeQueue.length === 0 && root.pendingExit) {
+                root.pendingExit = false;
+                fullScreenItem.exitSwipeMode();
+            }
+        }
+    }
+
     Python {
         id: python
         Component.onCompleted: {
@@ -30,14 +51,18 @@ RowLayout {
                 }
             });
             setHandler('partialReady', function(text) {
-                // фраза распозналась — печатаем сразу, пока идёт запись
+                // фраза распозналась — в очередь «машинистки»
                 if (text !== "") {
-                    event_handler.onKeyReleased(text + " ");
+                    root.typeQueue += text + " ";
                 }
             });
             setHandler('transcriptionReady', function(text) {
-                // весь текст уже напечатан фразами — только закрываем меню
-                fullScreenItem.exitSwipeMode();
+                // закрываем меню, когда машинистка допечатает
+                if (root.typeQueue.length === 0) {
+                    fullScreenItem.exitSwipeMode();
+                } else {
+                    root.pendingExit = true;
+                }
             });
             importModule('soundtype_dbus_listener', function() {
                 python.call('soundtype_dbus_listener.init', []);
