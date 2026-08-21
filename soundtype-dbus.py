@@ -17,6 +17,10 @@ class PyOtherSideMock:
         if event == 'done':
             text = args[0] if args else ""
             self.dbus_obj.TranscriptionReady(text)
+        elif event == 'partial':
+            # partial(idx, text) — фраза распозналась по ходу записи
+            if len(args) > 1 and args[1]:
+                self.dbus_obj.PartialReady(str(args[1]))
         elif event == 'recording':
             if args[0]:
                 self.dbus_obj.StatusChanged("recording")
@@ -46,6 +50,10 @@ class SoundTypeService(dbus.service.Object):
 
     @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')
     def StatusChanged(self, status):
+        pass
+
+    @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')
+    def PartialReady(self, text):
         pass
 
     @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')

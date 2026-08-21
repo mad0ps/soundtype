@@ -12,9 +12,12 @@ def run_dbus_loop():
         pyotherside.send('statusChanged', str(status))
     def ready_handler(text):
         pyotherside.send('transcriptionReady', str(text))
+    def partial_handler(text):
+        pyotherside.send('partialReady', str(text))
     
     bus.add_signal_receiver(status_handler, dbus_interface='com.n0madd3v0ps.soundtype', signal_name='StatusChanged')
     bus.add_signal_receiver(ready_handler, dbus_interface='com.n0madd3v0ps.soundtype', signal_name='TranscriptionReady')
+    bus.add_signal_receiver(partial_handler, dbus_interface='com.n0madd3v0ps.soundtype', signal_name='PartialReady')
     
     loop = GLib.MainLoop()
     loop.run()

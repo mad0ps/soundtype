@@ -29,11 +29,15 @@ RowLayout {
                     fullScreenItem.timerSwipe.restart();
                 }
             });
-            setHandler('transcriptionReady', function(text) {
+            setHandler('partialReady', function(text) {
+                // фраза распозналась — печатаем сразу, пока идёт запись
                 if (text !== "") {
                     event_handler.onKeyReleased(text + " ");
-                    fullScreenItem.exitSwipeMode();
                 }
+            });
+            setHandler('transcriptionReady', function(text) {
+                // весь текст уже напечатан фразами — только закрываем меню
+                fullScreenItem.exitSwipeMode();
             });
             importModule('soundtype_dbus_listener', function() {
                 python.call('soundtype_dbus_listener.init', []);
