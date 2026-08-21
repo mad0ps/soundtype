@@ -35,6 +35,8 @@ class PyOtherSideMock:
                 svc.StatusChanged("processing")
             else:
                 svc.StatusChanged("ready")
+        elif event == 'level':
+            svc.Level(float(args[0]))
         elif event == 'status':
             # 'loading' при (пере)загрузке движка — индикатору «занят»;
             # 'unloaded' после idle-выгрузки — индикатору «серый»
@@ -103,6 +105,10 @@ class SoundTypeService(dbus.service.Object):
 
     @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')
     def StatusChanged(self, status):
+        pass
+
+    @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='d')
+    def Level(self, value):
         pass
 
     @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')

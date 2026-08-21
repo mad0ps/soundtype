@@ -62,14 +62,63 @@ ActionKey {
              : fullScreenItem.dictationStatus === "processing" ? "gold"
              : fullScreenItem.dictationStatus === "ready" ? "limegreen"
              : "gray"
-        SequentialAnimation on opacity {
-            running: fullScreenItem.dictationStatus === "recording"
-            loops: Animation.Infinite
-            onRunningChanged: if (!running) micIndicator.opacity = 0.9
-            NumberAnimation { from: 1.0; to: 0.2; duration: 400 }
-            NumberAnimation { from: 0.2; to: 1.0; duration: 400 }
-        }
         opacity: 0.9
+    }
+
+    // SoundType: 4 бара-эквалайзер — дышат от громкости голоса (огибающая
+    // из Keyboard.qml). В тишине чуть колышутся («слушаю»), при расшифровке
+    // бегут волной, при «мёртвом» микрофоне замирают серыми.
+    Row {
+        id: voiceBars
+        spacing: units.gu(0.3)
+        anchors.verticalCenter: micIndicator.verticalCenter
+        anchors.left: micIndicator.right
+        anchors.leftMargin: units.gu(0.6)
+        visible: micIndicator.visible
+                 && (fullScreenItem.dictationStatus === "recording"
+                     || fullScreenItem.dictationStatus === "processing")
+
+        Repeater {
+            model: 4
+            delegate: Item {
+                width: units.gu(0.4)
+                height: units.gu(2)
+
+                property real gain: [0.65, 1.0, 0.82, 0.55][index]
+                property real sway: 0.0
+
+                SequentialAnimation on sway {
+                    running: voiceBars.visible && !fullScreenItem.dictationMicSilent
+                    loops: Animation.Infinite
+                    PauseAnimation { duration: index * 90 }
+                    NumberAnimation {
+                        from: 0.0; to: 1.0
+                        duration: fullScreenItem.dictationStatus === "processing" ? 260 : 420
+                        easing.type: Easing.InOutSine
+                    }
+                    NumberAnimation {
+                        from: 1.0; to: 0.0
+                        duration: fullScreenItem.dictationStatus === "processing" ? 260 : 420
+                        easing.type: Easing.InOutSine
+                    }
+                }
+
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width
+                    radius: width / 2
+                    color: fullScreenItem.dictationMicSilent ? "gray"
+                         : fullScreenItem.dictationStatus === "processing" ? "gold"
+                         : "red"
+                    height: {
+                        var base = 0.18 + 0.12 * sway;
+                        var voice = gain * fullScreenItem.dictationEnvelope;
+                        return parent.height * Math.min(1.0, base + voice);
+                    }
+                }
+            }
+        }
     }
 
     MouseArea {

@@ -60,6 +60,45 @@ Item {
     property string dictationStatus: "unloaded"
     property string dictationQueue: ""
 
+    // Живой уровень голоса (RMS ~8 Гц от демона) -> огибающая для баров:
+    // перцептивная кривая (тихая речь уже заметна) + мгновенная атака,
+    // плавный спад; Behavior растягивает шаги 125 мс в непрерывное движение.
+    property real dictationEnvelope: 0.0
+    property bool dictationMicSilent: false
+
+    function dictationOnLevel(raw) {
+        var m = 1.0 - Math.pow(0.1, 24.0 * raw);
+        dictationEnvelope = (m > dictationEnvelope)
+            ? m : dictationEnvelope + (m - dictationEnvelope) * 0.35;
+        if (m > 0.04) {
+            dictationMicSilent = false;
+            deadMicTimer.restart();
+        }
+    }
+
+    Behavior on dictationEnvelope {
+        NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+    }
+
+    // «Мёртвый микрофон» (паттерн FUTO): запись идёт, а звука нет совсем —
+    // бары замирают серыми, чтобы не диктовать в заблокированный микрофон.
+    Timer {
+        id: deadMicTimer
+        interval: 5000
+        onTriggered: if (fullScreenItem.dictationStatus === "recording")
+                         fullScreenItem.dictationMicSilent = true;
+    }
+
+    onDictationStatusChanged: {
+        if (dictationStatus === "recording") {
+            deadMicTimer.restart();
+        } else {
+            deadMicTimer.stop();
+            dictationMicSilent = false;
+            dictationEnvelope = 0.0;
+        }
+    }
+
     property variant input_method: maliit_input_method
     property variant event_handler: maliit_event_handler
 
@@ -551,6 +590,9 @@ Item {
             addImportPath('/home/phablet/soundtype/py');
             setHandler('statusChanged', function(newStatus) {
                 fullScreenItem.dictationStatus = newStatus;
+            });
+            setHandler('levelChanged', function(v) {
+                fullScreenItem.dictationOnLevel(v);
             });
             setHandler('partialReady', function(text) {
                 if (text !== "") {
