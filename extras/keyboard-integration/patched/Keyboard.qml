@@ -514,10 +514,10 @@ Item {
     HapticsEffect {
         id: dictationHoldEffect
         attackIntensity: 0.0
-        attackTime: 30
-        intensity: 0.7
-        duration: 90
-        fadeTime: 60
+        attackTime: 15
+        intensity: 0.35
+        duration: 45
+        fadeTime: 30
         fadeIntensity: 0.0
     }
 
