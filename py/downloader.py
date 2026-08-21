@@ -29,16 +29,16 @@ PARAKEET_URL = ('https://github.com/k2-fsa/sherpa-onnx/releases/download/'
 SILERO_URL = ('https://github.com/k2-fsa/sherpa-onnx/releases/download/'
               'asr-models/silero_vad.onnx')
 
-# Колёса под Python 3.8 / aarch64 — ровно то, что стоит в Ubuntu Touch 20.04.
+# Колёса под Python 3.12 / aarch64 — ровно то, что стоит в Ubuntu Touch 24.04.
 # Четвёртый элемент — файл-маркер готовности: по нему missing() судит, что
 # пакет установлен целиком, и он переносится на место ПОСЛЕДНИМ (атомарность).
 # sherpa-onnx-core обязателен: он кладёт libonnxruntime.so в то же дерево
 # sherpa_onnx, без него _sherpa_onnx не импортируется (ImportError на телефоне).
 WHEELS = [
-    ('numpy', '1.24.4', 'cp38-cp38-manylinux_2_17_aarch64',
+    ('numpy', '1.26.4', 'cp312-cp312-manylinux_2_17_aarch64',
      'numpy/version.py'),
-    ('sherpa-onnx', '1.13.6', 'cp38-cp38-manylinux2014_aarch64',
-     'sherpa_onnx/lib/_sherpa_onnx.cpython-38-aarch64-linux-gnu.so'),
+    ('sherpa-onnx', '1.13.6', 'cp312-cp312-manylinux2014_aarch64',
+     'sherpa_onnx/lib/_sherpa_onnx.cpython-312-aarch64-linux-gnu.so'),
     ('sherpa-onnx-core', '1.13.6', 'py3-none-manylinux2014_aarch64',
      'sherpa_onnx/lib/libonnxruntime.so'),
 ]

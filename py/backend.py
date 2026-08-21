@@ -295,6 +295,21 @@ class Dictation(object):
                 emit('error', 'Не удалось загрузить движок: %s' % exc)
         threading.Thread(target=work, daemon=True).start()
 
+    def unload(self):
+        import gc
+        with self.lock:
+            self.recognizer = None
+            self.vad = None
+        gc.collect()
+        # glibc не отдаёт освобождённую кучу ОС сам — без trim RSS остаётся
+        # сотни МБ после выгрузки модели
+        try:
+            import ctypes
+            ctypes.CDLL('libc.so.6').malloc_trim(0)
+        except Exception:
+            pass
+        emit('status', 'unloaded')
+
     # ---------- управление ----------
 
     def start(self):
@@ -534,6 +549,10 @@ def start():
 
 def stop():
     _engine.stop()
+
+
+def unload():
+    _engine.unload()
 
 
 def retry(ts):

@@ -18,7 +18,7 @@ def test_missing_when_all_present(tmp_path):
     (d / 'runtime' / 'pylibs' / 'numpy' / 'version.py').write_bytes(b'x')
     lib = d / 'runtime' / 'pylibs' / 'sherpa_onnx' / 'lib'
     lib.mkdir(parents=True)
-    (lib / '_sherpa_onnx.cpython-38-aarch64-linux-gnu.so').write_bytes(b'x')
+    (lib / '_sherpa_onnx.cpython-312-aarch64-linux-gnu.so').write_bytes(b'x')
     (lib / 'libonnxruntime.so').write_bytes(b'x')
     (d / 'models' / 'parakeet').mkdir(parents=True)
     (d / 'models' / 'silero_vad.onnx').write_bytes(b'x')
@@ -104,7 +104,7 @@ def test_missing_includes_core_wheel(tmp_path):
     (d / 'runtime' / 'pylibs' / 'numpy' / 'version.py').write_bytes(b'x')
     lib = d / 'runtime' / 'pylibs' / 'sherpa_onnx' / 'lib'
     lib.mkdir(parents=True)
-    (lib / '_sherpa_onnx.cpython-38-aarch64-linux-gnu.so').write_bytes(b'x')
+    (lib / '_sherpa_onnx.cpython-312-aarch64-linux-gnu.so').write_bytes(b'x')
     (d / 'models' / 'parakeet').mkdir(parents=True)
     (d / 'models' / 'silero_vad.onnx').write_bytes(b'x')
     (d / 'models' / 'parakeet' / 'encoder.int8.onnx').write_bytes(b'x')
@@ -130,7 +130,7 @@ def test_wheel_merge_does_not_replace_existing_tree(tmp_path, monkeypatch):
     wheels = {
         'sherpa-onnx': fake_wheel([
             ('sherpa_onnx/__init__.py', b'init'),
-            ('sherpa_onnx/lib/_sherpa_onnx.cpython-38-aarch64-linux-gnu.so',
+            ('sherpa_onnx/lib/_sherpa_onnx.cpython-312-aarch64-linux-gnu.so',
              b'so'),
         ]),
         'sherpa-onnx-core': fake_wheel([
@@ -157,7 +157,7 @@ def test_wheel_merge_does_not_replace_existing_tree(tmp_path, monkeypatch):
     downloader.fetch_wheels(None, str(tmp_path))
 
     lib = tmp_path / 'runtime' / 'pylibs' / 'sherpa_onnx' / 'lib'
-    assert (lib / '_sherpa_onnx.cpython-38-aarch64-linux-gnu.so').exists()
+    assert (lib / '_sherpa_onnx.cpython-312-aarch64-linux-gnu.so').exists()
     assert (lib / 'libonnxruntime.so').exists()
     assert (tmp_path / 'runtime' / 'pylibs' / 'sherpa_onnx'
             / '__init__.py').exists()
