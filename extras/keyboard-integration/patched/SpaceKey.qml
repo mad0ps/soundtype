@@ -66,10 +66,10 @@ ActionKey {
         opacity: 0.9
     }
 
-    // SoundType: стационарный эквалайзер — бары НЕ движутся по горизонтали,
-    // каждый стоит на месте и дышит от громкости (общая огибающая) со своим
-    // коэффициентом и лёгким собственным колыханием, чтобы ряд не был
-    // синхронным. В тишине — ряд кружочков.
+    // SoundType: стационарные бары, по которым «течёт» громкость.
+    // Бары не двигаются: правый показывает свежий замер, каждый следующий
+    // влево — чуть более старый (история dictationWave). Волна раздувания
+    // бежит справа налево сама, чисто за счёт смены высот.
     Row {
         id: spaceWave
         spacing: units.gu(0.7)
@@ -90,24 +90,8 @@ ActionKey {
                 width: spaceWave.barW
                 height: units.gu(2.2)
 
-                // статичный «характер» бара + собственное медленное колыхание
-                property real gain: 0.55 + 0.45 * Math.abs(Math.sin((index + 1) * 2.399))
-                property real sway: 0.0
-
-                SequentialAnimation on sway {
-                    running: spaceWave.visible && !fullScreenItem.dictationMicSilent
-                    loops: Animation.Infinite
-                    NumberAnimation {
-                        from: 0.0; to: 1.0
-                        duration: 240 + (index * 83) % 170
-                        easing.type: Easing.InOutSine
-                    }
-                    NumberAnimation {
-                        from: 1.0; to: 0.0
-                        duration: 240 + (index * 83) % 170
-                        easing.type: Easing.InOutSine
-                    }
-                }
+                // статичный «характер» бара — чтобы ряд не был идеально ровным
+                property real gain: 0.75 + 0.25 * Math.abs(Math.sin((index + 1) * 2.399))
 
                 Rectangle {
                     anchors.centerIn: parent
@@ -117,12 +101,15 @@ ActionKey {
                     color: fullScreenItem.dictationMicSilent ? "gray"
                          : fullScreenItem.dictationStatus === "processing" ? "gold"
                          : "red"
-                    height: Math.max(parent.width,
-                                     parent.height * Math.min(1.0,
-                                         fullScreenItem.dictationEnvelope
-                                         * gain * (0.6 + 0.4 * sway)))
+                    height: {
+                        var arr = fullScreenItem.dictationWave;
+                        var i = arr.length - 1 - (spaceWave.bars - 1 - index);
+                        var v = i >= 0 ? arr[i] : 0.0;
+                        return Math.max(parent.width,
+                                        parent.height * Math.min(1.0, v * gain * 1.25));
+                    }
                     Behavior on height {
-                        NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
+                        NumberAnimation { duration: 90; easing.type: Easing.OutQuad }
                     }
                 }
             }
