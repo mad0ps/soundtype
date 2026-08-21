@@ -1,176 +1,183 @@
-# Как устроено
+# How it works
 
-Приложение состоит из двух половин: интерфейс на QML и вся работа со звуком
-на Python. Между ними — [pyotherside](https://github.com/thp/pyotherside),
-QML-плагин, который умеет звать python-функции и принимать события обратно.
+The app consists of two halves: the UI in QML and all audio work in Python.
+Between them sits [pyotherside](https://github.com/thp/pyotherside), a QML
+plugin that can call Python functions and receive events back.
 
 ```
-  Main.qml  ──вызовы──▶  backend.py  ──ctypes──▶  libpulse-simple  (микрофон)
+  Main.qml  ──calls──▶  backend.py  ──ctypes──▶  libpulse-simple  (microphone)
      ▲                        │
-     └──────события───────────┤──────────────────▶  silero VAD     (нарезка)
-                              └──────────────────▶  Parakeet       (распознавание)
-                                                    через sherpa-onnx
+     └──────events────────────┤──────────────────▶  silero VAD     (segmentation)
+                              └──────────────────▶  Parakeet       (recognition)
+                                                    via sherpa-onnx
 ```
 
-Ни `torch`, ни компилятора: `sherpa-onnx` ставится готовым колесом под
-`cp38/aarch64`, модель уже в формате ONNX с квантованием int8.
+No `torch`, no compiler: `sherpa-onnx` installs as a prebuilt wheel for
+`cp312/aarch64` (noble; the 20.04 branch used cp38), and the model already
+comes in ONNX format with int8 quantization.
 
 ---
 
-## Обмен между QML и Python
+## QML ↔ Python communication
 
-**QML зовёт Python** (`py.call("backend.<имя>", [аргументы], обработчик)`):
+**QML calls Python** (`py.call("backend.<name>", [args], handler)`):
 
-| Функция | Что делает |
+| Function | What it does |
 |---|---|
-| `init()` | Загружает модель в фоновом потоке |
-| `start()` | Начинает запись |
-| `stop()` | Останавливает запись и запускает расшифровку |
-| `retry(ts)` | Переспрашивает модель по сохранённому звуку записи `ts` |
-| `history_list()` | Возвращает историю, новые записи первыми |
-| `history_clear()` | Стирает историю вместе со звуком |
-| `fetch_deps()` | Качает модель и библиотеки, шлёт прогресс |
+| `init()` | Loads the model in a background thread |
+| `start()` | Starts recording |
+| `stop()` | Stops recording and kicks off transcription |
+| `retry(ts)` | Re-runs the model on the saved audio of recording `ts` |
+| `history_list()` | Returns the history, newest entries first |
+| `history_clear()` | Wipes the history along with the audio |
+| `fetch_deps()` | Downloads the model and libraries, reporting progress |
 
-**Python шлёт события** (`pyotherside.send(...)`), QML ловит через
+**Python sends events** (`pyotherside.send(...)`), QML catches them via
 `setHandler`:
 
-| Событие | Аргументы | Когда |
+| Event | Arguments | When |
 |---|---|---|
-| `status` | — | Началась загрузка модели |
-| `ready` | имя модели | Модель загружена, кнопка ожила |
-| `recording` | `bool` | Запись началась / закончилась |
-| `elapsed` | секунды | Тик таймера во время записи |
-| `level` | 0…1 | Громкость, для кольца вокруг кнопки |
-| `transcribing` | `bool` | Расшифровка началась / закончилась |
-| `progress` | номер, всего | Разбор очередной фразы |
-| `final` | текст, `ts` | Готовая расшифровка |
-| `done` | текст | Всё завершено — QML кладёт текст в буфер |
-| `retried` | `ts`, текст | Результат повторного распознавания |
-| `error` | сообщение | Любая ошибка |
-| `partial` | номер, текст | Фраза распознана по ходу записи |
-| `deps-missing` | список | Нет модели/библиотек — нужен экран загрузки |
-| `download-progress` | этап, % | Ход загрузки (−1 — размер неизвестен) |
-| `download-done` | — | Всё скачано, дальше грузится движок |
-| `download-error` | сообщение | Сбой загрузки, можно повторить |
+| `status` | — | Model loading has started |
+| `ready` | model name | Model loaded, the button comes alive |
+| `recording` | `bool` | Recording started / stopped |
+| `elapsed` | seconds | Timer tick while recording |
+| `level` | 0…1 | Volume, for the ring around the button |
+| `transcribing` | `bool` | Transcription started / finished |
+| `progress` | index, total | Processing the next phrase |
+| `final` | text, `ts` | Finished transcription |
+| `done` | text | Everything done — QML puts the text on the clipboard |
+| `retried` | `ts`, text | Result of re-recognition |
+| `error` | message | Any error |
+| `partial` | index, text | Phrase recognized mid-recording |
+| `deps-missing` | list | Model/libraries missing — download screen needed |
+| `download-progress` | stage, % | Download progress (−1 — size unknown) |
+| `download-done` | — | Everything downloaded, engine loads next |
+| `download-error` | message | Download failed, can be retried |
 
-Все шестнадцать событий должны иметь пару в `Main.qml`. Если добавляешь
-новое — не забудь `setHandler`, иначе оно просто потеряется без предупреждения.
+All sixteen events must have a counterpart in `Main.qml`. If you add a new
+one — don't forget the `setHandler`, or it will simply get lost without warning.
 
 ---
 
-## Запись
+## Recording
 
-Поток записи не делает ничего, кроме чтения микрофона. Это принципиально:
-любая тяжёлая работа в этом цикле приводит к переполнению буфера PulseAudio
-и потере живой речи.
+The recording thread does nothing but read the microphone. This is a hard
+rule: any heavy work in this loop overflows the PulseAudio buffer and drops
+live speech.
 
 ```
 libpulse-simple (ctypes)
-    формат   s16le, 16 кГц, моно
-    чтение   по 4096 байт = 2048 отсчётов = 0.128 с за раз
-    накопление в список кусков, склейка в конце
-    предел   MAX_RECORD_SECONDS = 600 (около 38 МБ в памяти)
+    format   s16le, 16 kHz, mono
+    reads    4096 bytes = 2048 samples = 0.128 s at a time
+    accumulates chunks in a list, joined at the end
+    limit    MAX_RECORD_SECONDS = 600 (about 38 MB in memory)
 ```
 
-PulseAudio берётся напрямую через `ctypes`, а не через GStreamer — внутри
-конфайнмента это надёжнее и без лишних зависимостей.
+PulseAudio is accessed directly via `ctypes`, not through GStreamer — inside
+confinement this is more reliable and avoids extra dependencies.
 
-С 0.6 в цикле записи дополнительно работает VAD (окна по 512 отсчётов):
-готовые фразы уходят через очередь в поток декода (`py/streaming.py`). Цикл
-по-прежнему не делает тяжёлой работы — декод в другом потоке, sherpa-onnx
-отпускает GIL. Чтение по 4096 байт = 2048 отсчётов = 0.128 с.
+Since 0.6 the read loop additionally runs VAD (512-sample windows): completed
+phrases go through a queue to the decode thread (`py/streaming.py`). The loop
+still does no heavy work — decoding runs in another thread, and sherpa-onnx
+releases the GIL. Reads are 4096 bytes = 2048 samples = 0.128 s.
 
-## Расшифровка
+## Transcription
 
-С 0.6 идёт по ходу записи: VAD режет накопленный звук на фразы прямо в
-цикле чтения микрофона, каждая готовая фраза сразу уходит в очередь и
-распознаётся фоновым потоком, не дожидаясь остановки записи. На стопе
-доразбирается только последняя, ещё не закрытая фраза. Пакетный путь
-(`Dictation._transcribe`) остался для «переспросить» из истории — там
-весь звук уже лежит на диске, и резать/распознавать его целиком за один
-проход дешевле, чем городить поток.
+Since 0.6 it happens while recording: VAD slices the accumulated audio into
+phrases right in the microphone read loop, and each completed phrase goes
+straight into a queue and is recognized by a background thread, without
+waiting for recording to stop. On stop, only the last, still-open phrase is
+finished off. The batch path (`Dictation._transcribe`) remains for "retry"
+from history — there the audio already sits on disk, and slicing/recognizing
+it whole in one pass is cheaper than setting up a stream.
 
 ```
-1. Нарезка на фразы    silero VAD, окна по 512 отсчётов
-                       порог 0.5, тишина 0.35 с, речь от 0.20 с
-                       максимум одной фразы MAX_SPEECH = 30 с
-                       буфер детектора VAD_BUFFER_SECONDS = 120 с
+1. Phrase segmentation  silero VAD, 512-sample windows
+                        threshold 0.5, silence 1.0 s, speech from 0.25 s
+                        max phrase length MAX_SPEECH = 30 s
+                        detector buffer VAD_BUFFER_SECONDS = 120 s
+                        ring-buffer padding around segments: 0.4 s before,
+                        0.25 s after (sherpa-onnx clips edges otherwise)
 
-2. Распознавание       Parakeet TDT 0.6B v3 (int8), 4 потока
-                       каждая фраза отдельным вызовом
-                       фразы короче 0.2 с пропускаются
+2. Recognition          Parakeet TDT 0.6B v3 (int8), 4 threads
+                        each phrase in a separate call
+                        phrases shorter than 0.2 s are skipped
 
-3. Склейка             тексты соединяются пробелом
+3. Joining              sentence-aware glue: the first phrase and phrases
+                        after sentence-final punctuation are capitalized;
+                        a pause ≥1.5 s with no model punctuation inserts
+                        ". "; otherwise a plain space
 ```
 
-Если детектор не нашёл ни одной границы, вся запись уходит в модель целиком —
-лучше так, чем молча вернуть пустоту.
+If the detector finds no boundaries at all, the whole recording goes to the
+model in one piece — better that than silently returning nothing.
 
-Скорость: около 0.27 секунды счёта на секунду аудио. Загрузка модели при
-старте — примерно 5 секунд.
+Speed: about 0.27 seconds of compute per second of audio. Model load at
+startup — roughly 5 seconds.
 
-Пакетный путь (`_split` → `_decode` по очереди) остался для «повторить» из
-истории; нарезка та же — `streaming.Segmenter`.
+The batch path (`_split` → `_decode` in sequence) remains for "retry" from
+history; the segmentation is the same — `streaming.Segmenter`.
 
 ---
 
-## Что где лежит
+## What lives where
 
 ```
 ~/.local/share/soundtype.n0madd3v0ps/
 ├── models/
 │   ├── parakeet/
-│   │   ├── encoder.int8.onnx     652 МБ
-│   │   ├── decoder.int8.onnx      12 МБ
-│   │   ├── joiner.int8.onnx        6 МБ
-│   │   └── tokens.txt             словарь
-│   └── silero_vad.onnx           644 КБ
-├── runtime/pylibs/               numpy + sherpa_onnx, распакованные колёса
-├── history.jsonl                 по строке JSON на расшифровку: ts, text
-└── audio/<ts>.wav                звук последних AUDIO_KEEP = 20 записей
+│   │   ├── encoder.int8.onnx     652 MB
+│   │   ├── decoder.int8.onnx      12 MB
+│   │   ├── joiner.int8.onnx        6 MB
+│   │   └── tokens.txt             vocabulary
+│   └── silero_vad.onnx           644 KB
+├── runtime/pylibs/               numpy + sherpa_onnx, unpacked wheels
+├── history.jsonl                 one JSON line per transcription: ts, text
+└── audio/<ts>.wav                audio of the last AUDIO_KEEP = 20 recordings
 ```
 
-`history.jsonl` дописывается построчно, а перезаписывается целиком только
-при повторном распознавании — когда надо заменить текст одной записи.
-Ограничение `HISTORY_LIMIT = 500` применяется при чтении, файл не обрезается.
+`history.jsonl` is appended line by line, and rewritten in full only on
+re-recognition — when the text of a single entry has to be replaced.
+The `HISTORY_LIMIT = 500` cap is applied at read time; the file is not truncated.
 
-Каталог `runtime/pylibs` добавляется в `sys.path` первой строкой
-`backend.py` — до импорта `numpy` и `sherpa_onnx`.
+The `runtime/pylibs` directory is added to `sys.path` on the first line of
+`backend.py` — before `numpy` and `sherpa_onnx` are imported.
 
 ---
 
-## Буфер обмена
+## Clipboard
 
-Отдельного API для буфера у конфайнированного приложения нет. Используется
-обходной приём: скрытый `TextEdit`, в него кладётся текст, дальше
-`selectAll()` и `copy()`.
+A confined app has no dedicated clipboard API. A workaround is used: a hidden
+`TextEdit` — the text is put into it, followed by `selectAll()` and `copy()`.
 
-Выглядит как костыль, но это рабочий путь: в журнале видно, что служба
-`com.lomiri.content.dbus.Service` принимает `CreatePaste` от приложения.
-Попытка вызвать `CreatePaste` напрямую по D-Bus из консоли не проходит —
-буфер привязан к графической поверхности, а у консольной программы её нет.
+It looks like a hack, but it is the working path: the journal shows the
+`com.lomiri.content.dbus.Service` service accepting `CreatePaste` from the app.
+Calling `CreatePaste` directly over D-Bus from a console does not go through —
+the clipboard is tied to a graphical surface, and a console program has none.
 
-## Права
+## Permissions
 
-`soundtype.apparmor` запрашивает три группы:
+`soundtype.apparmor` requests three policy groups:
 
 ```json
-["microphone", "audio", "keep-display-on"]
+["microphone", "audio", "keep-display-on", "networking"]
 ```
 
-`content_exchange` не нужен: копирование через `TextEdit` работает и без него.
+`content_exchange` is not needed: copying via `TextEdit` works without it.
+`networking` exists solely for the model self-download (0.6.0+).
 
-В журнале при запуске всегда будут отказы AppArmor на
-`/sys/devices/system/cpu/*` — это `onnxruntime` пытается определить процессор.
-Не ошибка, но из-за них он не видит возможностей ядра и считает медленнее.
+At startup the journal will always show AppArmor denials on
+`/sys/devices/system/cpu/*` — that's `onnxruntime` trying to identify the CPU.
+Not an error, but because of them it can't see the CPU's capabilities and
+computes slower.
 
 ---
 
-## Сборка
+## Build
 
-`click build` требует, чтобы рядом с `manifest.json` лежали только файлы
-приложения. Поэтому `scripts/build.sh` собирает содержимое в `build/soundtype/`
-и пакует уже оттуда, а не из корня репозитория.
+`click build` requires that only the app's files sit next to `manifest.json`.
+So `scripts/build.sh` assembles the contents into `build/soundtype/` and
+packages from there, not from the repository root.
 
-Модель и библиотеки в пакет **не входят** — они живут в каталоге данных и
-переустановку приложения переживают.
+The model and libraries are **not included** in the package — they live in the
+data directory and survive app reinstalls.

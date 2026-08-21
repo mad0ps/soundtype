@@ -1,105 +1,111 @@
-# История изменений
+# Changelog
 
-## 0.8.0 — диктовка в системной клавиатуре (hold-space)
+## 0.8.0 — dictation in the system keyboard (hold-space)
 
-* **Жест hold-space**: зажал пробел (~0.8 с, вибро-отклик по готовности) и
-  отпустил, не двигая палец, — пошла запись; короткий тап по пробелу — стоп
-  (пробел при этом не печатается); зажал и повёл палец — стоковый
-  тачпад-курсор, как и был.
-* **Индикатор на пробеле** (слева, где не закрывает палец): серый — движок
-  не в памяти, жёлтый — грузится или расшифровывает, красный пульс — запись,
-  зелёный — движок в памяти, старт мгновенный.
-* Кнопка микрофона в свайп-меню осталась — тонкий триггер того же общего
-  состояния, без собственной логики.
-* **Логика диктовки переехала на постоянный слой клавиатуры**
-  (`Keyboard.qml`): печать больше не умирает при открытии/закрытии
-  свайп-меню.
-* **Ленивый движок в демоне + выгрузка после 5 минут простоя**: демон в
-  простое занимает десятки МБ вместо ~1 ГБ резидентно; после выгрузки первая
-  диктовка ждёт загрузку ~5 с (индикатор жёлтый), дальше — мгновенно.
-  `malloc_trim` возвращает освобождённую память ОС.
-* **`extras/keyboard-integration/`** — установка одной командой: бекапы
-  стоковых файлов, systemd-юнит демона, перезапуск клавиатуры. `uninstall.sh`
-  откатывает. Патч слетает при OTA — переустановить той же командой.
-* Основано на PR #1 от twicros (демон, D-Bus-мост, сама идея интеграции) +
-  наши жест, индикатор и доводка выгрузки.
+* **Hold-space gesture**: press and hold the space bar (~0.8 s, haptic
+  feedback when ready) and release without moving your finger — recording
+  starts; a short tap on space stops it (no space is typed); press and slide
+  your finger — the stock touchpad cursor, same as before.
+* **Indicator on the space bar** (on the left, where your finger doesn't
+  cover it): gray — engine not in memory, yellow — loading or transcribing,
+  pulsing red — recording, green — engine in memory, instant start.
+* The microphone button in the swipe menu stays — a thin trigger of the same
+  shared state, with no logic of its own.
+* **Dictation logic moved to the keyboard's persistent layer**
+  (`Keyboard.qml`): typing no longer dies when the swipe menu is opened or
+  closed.
+* **Lazy engine in the daemon + unload after 5 minutes idle**: when idle the
+  daemon takes tens of MB instead of ~1 GB resident; after an unload the
+  first dictation waits ~5 s for loading (yellow indicator), instant after
+  that. `malloc_trim` returns the freed memory to the OS.
+* **`extras/keyboard-integration/`** — one-command install: backups of the
+  stock files, a systemd unit for the daemon, keyboard restart. `uninstall.sh`
+  rolls it back. The patch is wiped by an OTA update — reinstall with the
+  same command.
+* Based on PR #1 by twicros (the daemon, the D-Bus bridge, the integration
+  idea itself) + our gesture, indicator, and unload polish.
 
 ## 0.7.0 — Ubuntu Touch 24.04
 
-* Порт на UT 24.04 (noble): python-колёса под Python 3.12 (numpy 1.26.4,
+* Port to UT 24.04 (noble): python wheels for Python 3.12 (numpy 1.26.4,
   sherpa-onnx cp312), framework `ubuntu-touch-24.04-1.x`.
-* Экспериментальная интеграция в системную клавиатуру (см. PR #1 от twicros +
-  ветка feat/noble-port): голосовой ввод из свайп-меню, фразы печатаются
-  по ходу речи посимвольно («машинистка»), свайп-меню не закрывается во
-  время диктовки. Ставится отдельно, патчит системный раздел, слетает при OTA.
+* Experimental system keyboard integration (see PR #1 by twicros + the
+  feat/noble-port branch): voice input from the swipe menu, phrases are typed
+  character by character as you speak (typewriter effect), the swipe menu
+  stays open during dictation. Installed separately, patches the system
+  partition, wiped by an OTA update.
 
-## 0.6.0 — потоковая расшифровка
+## 0.6.0 — streaming transcription
 
-* **Текст появляется по ходу записи.** VAD режет речь на фразы прямо в цикле
-  записи; отдельный поток декодирует каждую фразу сразу, пока идёт следующая.
-  После «стоп» доделывается только последняя фраза — финал за секунды вместо
-  15–21 с на длинной записи.
-* **Приложение само качает модель.** На первом запуске — экран с кнопкой
-  «Скачать» (~500 МБ, лучше по Wi-Fi) и прогрессом. Ручной
-  `scripts/fetch-deps.py` остался как обёртка той же логики.
-* **Голосовые волны** во время записи: лента баров, высота = громкость.
-* В apparmor добавлен `networking` — только ради загрузки модели; после неё
-  приложение полностью офлайн, звук никуда не уходит.
-* «Повторить» из истории больше нельзя запустить во время записи — они делят
-  один детектор тишины.
+* **Text appears as you record.** VAD splits speech into phrases right in the
+  recording loop; a separate thread decodes each phrase immediately while the
+  next one is being spoken. After "stop" only the last phrase is left to
+  finish — the final result takes seconds instead of 15–21 s on a long
+  recording.
+* **The app downloads the model itself.** On first launch — a screen with a
+  "Download" button (~500 MB, Wi-Fi recommended) and a progress bar. The
+  manual `scripts/fetch-deps.py` remains as a wrapper around the same logic.
+* **Voice waves** during recording: a ribbon of bars, height = loudness.
+* `networking` added to apparmor — solely for the model download; after that
+  the app is fully offline, no audio leaves the device.
+* "Retry" from history can no longer be started during recording — they
+  share a single silence detector.
 
 ## 0.5.0
 
-* **Кнопка «повторить»** у записей в истории. Переспрашивает модель по
-  сохранённому звуку, новый текст заменяет старый и уходит в буфер.
-* **Звук сохраняется** для последних 20 записей (`audio/<ts>.wav`), старые
-  удаляются автоматически. Без этого повторять было бы нечего: история хранила
-  только текст.
-* У записей без звука кнопки нет и подписано, что переспросить нечем.
-* Очистка истории теперь удаляет и сохранённые записи.
+* **"Retry" button** on history entries. Re-asks the model using the saved
+  audio; the new text replaces the old one and goes to the clipboard.
+* **Audio is kept** for the last 20 recordings (`audio/<ts>.wav`), older
+  ones are deleted automatically. Without this there would be nothing to
+  retry: history stored only text.
+* Entries without audio have no button and are labeled to say there is
+  nothing to re-ask with.
+* Clearing the history now also deletes the saved recordings.
 
-## 0.4.0 — пакетный режим
+## 0.4.0 — batch mode
 
-Переработан порядок работы: **запись и распознавание больше не пересекаются**.
+Reworked flow: **recording and recognition no longer overlap**.
 
-* Во время записи распознавание не идёт вообще — поток чтения микрофона только
-  копит байты. Терять на паузах стало нечего.
-* Вся расшифровка после нажатия «стоп», с прогрессом «3 из 7».
-* Готовый текст **сразу в буфере обмена** — можно уходить в другое приложение
-  и вставлять.
-* Таймер записи в шапке.
-* Кнопка блокируется на время расшифровки.
-* Если ничего не распозналось — так и сообщает, а не кладёт в буфер пустоту.
-* Предел записи 10 минут, при достижении останавливается сама.
+* No recognition runs during recording — the microphone reading thread only
+  accumulates bytes. Nothing left to lose on pauses.
+* All transcription happens after "stop", with "3 of 7" progress.
+* The finished text goes **straight to the clipboard** — you can switch to
+  another app and paste.
+* Recording timer in the header.
+* The button is locked while transcribing.
+* If nothing was recognized, it says so instead of putting an empty string
+  on the clipboard.
+* Recording limit of 10 minutes; stops on its own when reached.
 
-## 0.3.0 — история и развод потоков
+## 0.3.0 — history and thread separation
 
-* **Захват и распознавание разнесены по потокам** через очередь. Это убрало
-  потерю звука: раньше распознавание вызывалось прямо из цикла чтения
-  микрофона, цикл замирал на каждой паузе, буфер PulseAudio переполнялся, и
-  длинные диктовки приходили обрезанными.
-* **История расшифровок** в `history.jsonl` с отметками времени, отдельный
-  экран, тап по записи копирует её.
-* Поле очищается при нажатии зелёной кнопки — безопасно только теперь, когда
-  предыдущий текст остаётся в истории.
-* Потолок непрерывной фразы поднят с 18 до 40 секунд, буфер детектора с 60 до
-  240 секунд.
-* Автокопирование после остановки ждёт, пока очередь досчитается, иначе в
-  буфер попадал обрезанный текст.
+* **Capture and recognition split into separate threads** via a queue. This
+  eliminated audio loss: previously recognition was called straight from the
+  microphone reading loop, the loop froze on every pause, the PulseAudio
+  buffer overflowed, and long dictations came back truncated.
+* **Transcription history** in `history.jsonl` with timestamps, a separate
+  screen, tapping an entry copies it.
+* The field is cleared when the green button is pressed — safe only now that
+  the previous text stays in history.
+* Continuous phrase ceiling raised from 18 to 40 seconds, detector buffer
+  from 60 to 240 seconds.
+* Auto-copy after stopping waits for the queue to drain, otherwise truncated
+  text ended up on the clipboard.
 
-## 0.2.0 — переход на Parakeet
+## 0.2.0 — switch to Parakeet
 
-* Движок сменён с Vosk на **Parakeet TDT 0.6B v3** через `sherpa-onnx`.
-  Заметно выше точность, 25 языков, русский с английским можно мешать в одной
-  фразе.
-* **Модель вынесена из пакета** в каталог данных приложения. Пакет похудел с
-  49 МБ до 10 КБ, модель ставится отдельно скриптом и переживает переустановку.
-* Нарезка на фразы детектором тишины silero VAD.
-* Копирование результата в буфер обмена.
+* Engine switched from Vosk to **Parakeet TDT 0.6B v3** via `sherpa-onnx`.
+  Noticeably higher accuracy, 25 languages, Russian and English can be mixed
+  in one phrase.
+* **The model moved out of the package** into the app's data directory. The
+  package slimmed from 49 MB to 10 KB; the model is installed separately by
+  a script and survives reinstalls.
+* Phrase segmentation by the silero VAD silence detector.
+* Result copied to the clipboard.
 
-## 0.1.0 — первая рабочая версия
+## 0.1.0 — first working version
 
-* Распознавание на **Vosk** (малая русская модель), веса лежали прямо в
-  click-пакете — отсюда его размер 49 МБ.
-* Запись через `libpulse-simple` напрямую по `ctypes`.
-* Отказались от Vosk по точности до того, как версия куда-либо публиковалась.
+* Recognition with **Vosk** (small Russian model), the weights lived right
+  inside the click package — hence its 49 MB size.
+* Recording via `libpulse-simple` directly through `ctypes`.
+* Dropped Vosk over accuracy before this version was published anywhere.

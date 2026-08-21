@@ -1,181 +1,188 @@
-# Принятые решения
+# Decisions
 
-Здесь записано, почему сделано именно так, и что было отвергнуто. Смысл в
-том, чтобы не переигрывать заново уже проверенное — и чтобы было видно, где
-решение принято на измерениях, а где на глазок.
+This file records why things are done the way they are, and what was rejected.
+The point is to avoid re-fighting battles that have already been settled — and
+to make it visible where a decision rests on measurements and where on gut
+feeling.
 
 ---
 
-## Движок распознавания: Parakeet TDT 0.6B v3 через sherpa-onnx
+## Recognition engine: Parakeet TDT 0.6B v3 via sherpa-onnx
 
-**Почему он.** Одна модель на 25 языков, включая русский и английский, причём
-их можно мешать **в одной фразе** — «закоммить в докер» распознаётся целиком.
-Готовые веса в ONNX с квантованием int8, 660 МБ. Запускается через
-`sherpa-onnx`, который ставится колесом под `cp38/aarch64` — **компилятор и
-`torch` не нужны вовсе**, что на телефоне решающе.
+**Why this one.** A single model covering 25 languages, including Russian and
+English, and they can be mixed **within one phrase** — "закоммить в докер" is
+recognized as a whole. Ready-made ONNX weights with int8 quantization, 660 MB.
+Runs via `sherpa-onnx`, which installs as a wheel for `cp312/aarch64` — **no
+compiler and no `torch` needed at all**, which is decisive on a phone.
 
-**Что отвергли:**
+**What was rejected:**
 
-| Вариант | Почему нет |
+| Option | Why not |
 |---|---|
-| **Vosk** (малая русская модель) | Заметно хуже по точности. Начинали с неё, отказались до первого релиза |
-| **Whisper через облако** (OpenAI/Groq) | Нужен ключ и интернет, аудио уходит на чужой сервер. Противоречит смыслу приложения |
-| **GigaAM-v3** от Сбера | Соблазнительно: WER ~3.3% против ~8% у Whisper large-v3 на русском, веса всего 428 МБ. Но: только русский — теряется смешивание языков; ставится через `pip` и тянет `torch` (~3 ГБ), на телефоне неподъёмно; сборок под `sherpa-onnx` нет ни в одном релизе — проверено поиском по всем тегам. Путь был бы через самостоятельный экспорт в ONNX на компьютере с неочевидным исходом |
+| **Vosk** (small Russian model) | Noticeably worse accuracy. We started with it and dropped it before the first release |
+| **Whisper via cloud** (OpenAI/Groq) | Needs an API key and internet, audio goes to someone else's server. Contradicts the whole point of the app |
+| **GigaAM-v3** from Sber | Tempting: WER ~3.3% vs ~8% for Whisper large-v3 on Russian, weights only 428 MB. But: Russian only — language mixing is lost; installs via `pip` and pulls in `torch` (~3 GB), unmanageable on a phone; no sherpa-onnx builds in any release — verified by searching every tag. The path would be a do-it-yourself ONNX export on a desktop with an uncertain outcome |
 
-GigaAM стоит вернуть к рассмотрению, если появится готовая сборка под
-sherpa-onnx или если смешивание языков окажется не нужным.
+GigaAM is worth revisiting if a ready sherpa-onnx build appears or if language
+mixing turns out to be unnecessary. *(Update 2026-08: community sherpa-onnx
+conversions of GigaAM-v3 now exist on HF — tracked as the "pure Russian
+profile" item in ROADMAP phase 2.)*
 
 ---
 
-## Порядок работы: сначала записать, потом распознать
+## Order of operations: record first, recognize after
 
-Запись и распознавание **не пересекаются во времени**. Пока идёт запись,
-поток чтения микрофона не делает ничего тяжёлого.
+Recording and recognition **do not overlap in time**. While recording is in
+progress, the microphone read loop does nothing heavy.
 
-**Как пришли.** Сначала было наоборот — распознавание шло по ходу дела,
-прямо из цикла чтения:
+**How we got here.** At first it was the other way around — recognition ran on
+the fly, right in the read loop:
 
 ```python
 while not stop:
-    pa_simple_read(...)      # 0.256 с звука
+    pa_simple_read(...)      # 0.256 s of audio
     vad.accept_waveform(...)
-    self._drain()            # ← распознавание ЗДЕСЬ, блокирует цикл
+    self._drain()            # ← recognition HERE, blocks the loop
 ```
 
-Каждая пауза в речи запускала расшифровку, цикл замирал на секунду с лишним,
-буфер PulseAudio переполнялся. **Длинные диктовки приходили обрезанными** —
-и это был не редкий сбой, а систематическая потеря на каждой паузе.
+Every pause in speech triggered transcription, the loop stalled for over a
+second, and the PulseAudio buffer overflowed. **Long dictations came back
+truncated** — and it wasn't a rare glitch but a systematic loss on every pause.
 
-Промежуточный вариант — очередь и отдельный поток распознавания — потерю
-убрал. Но окончательно перешли на пакетный режим: он проще, у него нет
-состязания за процессор, и он лучше ложится на то, как приложением реально
-пользуются — надиктовал, остановил, забрал текст.
+The intermediate variant — a queue and a separate recognition thread —
+eliminated the loss. But we ultimately moved to batch mode: it's simpler, has
+no contention for the CPU, and better fits how the app is actually used —
+dictate, stop, grab the text.
 
-**Побочный выигрыш:** потолок непрерывной фразы удалось поднять с 18 до 30
-секунд, а звук целиком остаётся в памяти — отсюда стало возможным повторное
-распознавание.
-
----
-
-## Звук: libpulse-simple через ctypes
-
-Не GStreamer и не `arecord`. Внутри конфайнмента прямой вызов библиотеки
-надёжнее и не тянет зависимостей. Формат сразу тот, что нужен модели —
-16 кГц, моно, s16le, — конвертировать нечего.
+**Side benefit:** the ceiling for a continuous phrase went up from 18 to 30
+seconds, and the audio stays in memory in full — which is what made
+re-recognition possible.
 
 ---
 
-## Буфер обмена: скрытый TextEdit
+## Audio: libpulse-simple via ctypes
 
-Отдельного API у конфайнированного приложения нет. Текст кладётся в невидимый
-`TextEdit`, дальше `selectAll()` и `copy()`.
-
-**Прямой вызов D-Bus не работает.** Метод `CreatePaste` службы
-`com.lomiri.content.dbus.Service` при вызове из консоли возвращает отказ —
-проверено и с сырым текстом, и с правильной сериализацией `QMimeData`. Буфер
-привязан к графической поверхности приложения, у консольной программы её нет.
+Not GStreamer and not `arecord`. Inside confinement a direct library call is
+more reliable and pulls in no dependencies. The format is exactly what the
+model needs from the start — 16 kHz, mono, s16le — nothing to convert.
 
 ---
 
-## Хранение звука для повтора: 20 последних записей
+## Clipboard: hidden TextEdit
 
-Кнопка «повторить» требует сохранённого звука — из текста расшифровку не
-восстановить.
+A confined app has no dedicated API. The text goes into an invisible
+`TextEdit`, followed by `selectAll()` and `copy()`.
 
-Минута речи это около 2 МБ. Двадцать записей — десятки мегабайт, приемлемо.
-Старые удаляются автоматически, текст истории при этом сохраняется весь.
-
-**Чего повтор НЕ даёт.** Модель детерминированная: на исправном звуке результат
-будет тот же. Повтор помогает, когда первый заход **сорвался** — не хватило
-памяти, приложение свернули, распознавание оборвалось ошибкой. Это не «нажми
-ещё раз, вдруг распознает лучше».
-
-Чтобы повтор давал **другой** результат, надо менять условия: параметры
-нарезки на фразы или саму модель. Это отдельная задача.
+**A direct D-Bus call does not work.** The `CreatePaste` method of the
+`com.lomiri.content.dbus.Service` service returns a refusal when called from a
+console — verified both with raw text and with proper `QMimeData`
+serialization. The clipboard is tied to the app's graphical surface, and a
+console program has none.
 
 ---
 
-## Очистка поля при старте записи
+## Keeping audio for retry: the last 20 recordings
 
-Поле очищается, когда жмёшь зелёную кнопку. Безопасно это стало только после
-появления истории: до неё предыдущая расшифровка исчезала бы безвозвратно.
+The "retry" button needs saved audio — a transcription cannot be reconstructed
+from text.
 
-Порядок именно такой: сначала история, потом очистка.
+A minute of speech is about 2 MB. Twenty recordings — tens of megabytes,
+acceptable. Old ones are deleted automatically; the history text is kept in full.
 
----
+**What retry does NOT give you.** The model is deterministic: on intact audio
+the result will be the same. Retry helps when the first attempt **failed** —
+ran out of memory, the app got backgrounded, recognition died with an error.
+It is not "press again, maybe it recognizes better this time".
 
-## Установка: служба com.lomiri.click, а не pkcon
-
-`pkcon install-local` на Ubuntu Touch для click-пакетов **не работает в
-принципе**: бэкенд PackageKit здесь `aptcc`, он про `.deb`. Ошибка при этом
-маскируется под «файл не найден», что сбивает с толку.
-
-Установкой click-пакетов занимается привилегированная служба
-`com.lomiri.click`, та же, что использует OpenStore. Она работает от root,
-но политика D-Bus разрешает вызов любому пользователю — **пароль не нужен**.
+For retry to produce a **different** result, the conditions have to change:
+the phrase segmentation parameters or the model itself. That is a separate task.
 
 ---
 
-## Зависимости не в git
+## Clearing the field when recording starts
 
-Модель (660 МБ) и колёса (130 МБ) в репозиторий не кладутся — иначе клон
-станет неподъёмным. Их докачивает `scripts/fetch-deps.py` прямо в каталог
-данных приложения.
+The field is cleared when you press the green button. This became safe only
+after history appeared: before it, the previous transcription would have been
+lost for good.
 
-Колёса распаковываются вручную через `zipfile`: `pip` на устройстве
-отсутствует, а колесо — обычный zip.
-
----
-
-## Открытые вопросы
-
-**Модель в памяти постоянно.** Занимает около 1 ГБ и не выгружается при
-простое. Для телефона с 5.4 ГБ это ощутимо. Выгрузка по бездействию сделала
-бы приложение вежливее ценой пяти секунд ожидания при следующей диктовке.
-Решения пока нет.
-
-**OpenStore.** Туда кладут готовый `.click`, а наш зависит от модели в 660 МБ.
-Докачка из самого приложения при первом запуске сделана в 0.6, с прогрессом —
-но без докачки после обрыва: сбой скачивания начинает файл заново
-(`py/downloader.py`). Сама публикация в OpenStore не сделана.
-
-**Автоповтор при сбое.** Если распознавание одной фразы падает с исключением,
-она сейчас просто теряется — в журнал пишется ошибка, остальные фразы
-считаются дальше. Честный автоповтор (сорвалось → попробовать ещё раз →
-только потом сообщить) выглядит разумно.
+The order matters: history first, then clearing.
 
 ---
 
-## Возврат к декоду во время записи — но не тем путём, что в 0.2
+## Installation: the com.lomiri.click service, not pkcon
 
-В 0.2 распознавание звалось прямо из цикла чтения микрофона и роняло звук;
-в 0.4 ушли на пакетный режим. В 0.6 декод снова идёт по ходу записи, но
-архитектура другая, и грабли 0.2 сюда не переносятся:
+`pkcon install-local` for click packages on Ubuntu Touch **does not work at
+all**: the PackageKit backend here is `aptcc`, which is about `.deb`. The
+error masquerades as "file not found", which is misleading.
 
-* В цикле записи — только лёгкий VAD (silero, окно 512 отсчётов, ~мс на окно).
-  Тяжёлый декод — в отдельном потоке через `queue.Queue`; sherpa-onnx на
-  декоде отпускает GIL, так что потоки реально параллельны.
-* Замер на N10 (int8, 4 потока): 84 с аудио → 14.8 с декода с VAD (~5.7x).
-  Декод успевает за записью с запасом.
-* Ловушка sherpa-onnx #2918 учтена: декодируется только текущий сегмент,
-  растущий буфер не пере-декодируется никогда.
-* Референс архитектуры — FluidAudio/Spokenly (декод VAD-сегментов в фоне,
-  на стопе только последняя фраза). Копируем идею, не код: их streaming-модель
-  и Apple Neural Engine нам недоступны.
+Click packages are installed by the privileged `com.lomiri.click` service —
+the same one OpenStore uses. It runs as root, but the D-Bus policy allows any
+user to call it — **no password needed**.
 
-Спека с измерениями: `docs/specs/2026-08-20-streaming-selfdownload-waveform.md`.
+---
 
-**Атомарность докачки (C1, 0.6.1).** `missing()` определяет, что докачивать,
-простой проверкой `os.path.exists` — ни контрольных сумм, ни размеров. Это
-безопасно ТОЛЬКО потому, что каждый писатель в `py/downloader.py` кладёт
-файл/каталог атомарно: `fetch_silero` качает во временный `*.part` и
-переименовывает (`os.replace`) на успехе, `fetch_wheels`/`fetch_parakeet`
-распаковывают во временный каталог и переносят готовое дерево целиком. Новый
-писатель, который льёт данные прямо в конечный путь, тихо ломает это
-допущение — обрыв на середине оставит частично готовый файл/каталог, который
-`missing()` посчитает присутствующим.
+## Dependencies stay out of git
 
-## Silero VAD остаётся
+The model (660 MB) and the wheels (130 MB) are not committed to the
+repository — otherwise the clone would become unmanageable.
+`scripts/fetch-deps.py` downloads them straight into the app's data directory.
 
-Раньше обсуждали убрать VAD ради качества на стыках. Отменено: VAD — это и
-есть механизм потоковой нарезки. Режем по паузам, слова не рвём.
+The wheels are unpacked manually via `zipfile`: there is no `pip` on the
+device, and a wheel is just a zip.
+
+---
+
+## Open questions
+
+**Model stays in memory (app path).** It takes about 1 GB. Since 0.8.0 the
+keyboard daemon loads the engine lazily and unloads it after 5 idle minutes
+(`malloc_trim` returns the memory to the OS: tens of MB idle). The GUI app
+still keeps the model resident while open — unloading there is an open task.
+
+**OpenStore.** It hosts a ready `.click`, and ours depends on a 660 MB model.
+In-app download on first launch was implemented in 0.6, with progress — but
+without resume after interruption: a failed download restarts the file from
+scratch (`py/downloader.py`). The OpenStore publication itself hasn't happened.
+
+**Auto-retry on failure.** If recognizing a single phrase dies with an
+exception, it is currently just lost — the error is logged, and the remaining
+phrases keep being processed. An honest auto-retry (failed → try again →
+only then report) looks reasonable.
+
+---
+
+## Back to decoding during recording — but not the 0.2 way
+
+In 0.2 recognition was called right from the microphone read loop and dropped
+audio; in 0.4 we moved to batch mode. In 0.6 decoding runs during recording
+again, but the architecture is different, and the 0.2 pitfalls do not carry over:
+
+* The recording loop runs only lightweight VAD (silero, 512-sample window,
+  ~ms per window). Heavy decoding lives in a separate thread behind a
+  `queue.Queue`; sherpa-onnx releases the GIL while decoding, so the threads
+  are genuinely parallel.
+* Measured on the N10 (int8, 4 threads): 84 s of audio → 14.8 s of decoding
+  with VAD (~5.7x). Decoding keeps up with recording with room to spare.
+* The sherpa-onnx #2918 trap is accounted for: only the current segment is
+  decoded, the growing buffer is never re-decoded.
+* The architecture reference is FluidAudio/Spokenly (decoding VAD segments in
+  the background, only the last phrase on stop). We copy the idea, not the
+  code: their streaming model and the Apple Neural Engine are out of our reach.
+
+Spec with measurements: `docs/specs/2026-08-20-streaming-selfdownload-waveform.md`.
+
+**Download atomicity (C1, 0.6.1).** `missing()` decides what to download with
+a plain `os.path.exists` check — no checksums, no sizes. This is safe ONLY
+because every writer in `py/downloader.py` places its file/directory
+atomically: `fetch_silero` downloads to a temporary `*.part` and renames
+(`os.replace`) on success; `fetch_wheels`/`fetch_parakeet` unpack into a
+temporary directory and move the finished tree as a whole. A new writer that
+streams data straight to the final path silently breaks this assumption — an
+interruption midway leaves a partially complete file/directory that
+`missing()` will count as present.
+
+## Silero VAD stays
+
+We previously discussed dropping VAD for better quality at segment boundaries.
+Cancelled: VAD IS the streaming segmentation mechanism. We cut at pauses;
+words are not torn apart.
