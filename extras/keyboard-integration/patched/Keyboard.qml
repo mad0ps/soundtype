@@ -65,11 +65,18 @@ Item {
     // плавный спад; Behavior растягивает шаги 125 мс в непрерывное движение.
     property real dictationEnvelope: 0.0
     property bool dictationMicSilent: false
+    // Волна-история: справа рождается бар с текущей громкостью, старые
+    // уползают влево (стиль WhatsApp/iOS). Один массив кормит и пробел,
+    // и полосу над клавиатурой.
+    property var dictationWave: []
 
     function dictationOnLevel(raw) {
         var m = 1.0 - Math.pow(0.1, 24.0 * raw);
         dictationEnvelope = (m > dictationEnvelope)
             ? m : dictationEnvelope + (m - dictationEnvelope) * 0.35;
+        var w = dictationWave.slice(-47);
+        w.push(dictationEnvelope);
+        dictationWave = w;
         if (m > 0.04) {
             dictationMicSilent = false;
             deadMicTimer.restart();
@@ -96,6 +103,9 @@ Item {
             deadMicTimer.stop();
             dictationMicSilent = false;
             dictationEnvelope = 0.0;
+            if (dictationStatus !== "processing") {
+                dictationWave = [];
+            }
         }
     }
 
@@ -212,6 +222,65 @@ Item {
                     height: units.dp(1)
                     color: fullScreenItem.theme.dividerColor
                     anchors.bottom: wordRibbon.visible ? wordRibbon.top : keyboardComp.top
+                }
+
+                Rectangle {
+                    id: dictationStrip
+                    z: 2
+                    visible: fullScreenItem.dictationStatus === "recording"
+                             || fullScreenItem.dictationStatus === "processing"
+                    onVisibleChanged: fullScreenItem.reportKeyboardVisibleRect()
+                    anchors.bottom: wordRibbon.visible ? wordRibbon.top : keyboardComp.top
+                    width: parent.width
+                    height: visible ? units.gu(4) : 0
+                    color: fullScreenItem.theme.backgroundColor
+
+                    Icon {
+                        id: stripMic
+                        name: "audio-input-microphone-symbolic"
+                        width: units.gu(2.5)
+                        height: width
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: units.gu(1.5)
+                        color: fullScreenItem.dictationMicSilent ? "gray"
+                             : fullScreenItem.dictationStatus === "processing" ? "gold"
+                             : "red"
+                    }
+
+                    Row {
+                        id: stripWave
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: stripMic.right
+                        anchors.leftMargin: units.gu(1.5)
+                        anchors.right: parent.right
+                        anchors.rightMargin: units.gu(1.5)
+                        spacing: units.gu(0.35)
+                        property int bars: Math.max(8, Math.floor(width / units.gu(0.75)))
+
+                        Repeater {
+                            model: stripWave.bars
+                            delegate: Item {
+                                width: units.gu(0.4)
+                                height: units.gu(3)
+                                Rectangle {
+                                    anchors.centerIn: parent
+                                    width: parent.width
+                                    radius: width / 2
+                                    color: stripMic.color
+                                    height: {
+                                        var arr = fullScreenItem.dictationWave;
+                                        var i = arr.length - stripWave.bars + index;
+                                        var v = i >= 0 ? arr[i] : 0.0;
+                                        return units.gu(3) * Math.max(0.08, Math.min(1.0, v));
+                                    }
+                                    Behavior on height {
+                                        NumberAnimation { duration: 110 }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 WordRibbon {
@@ -660,7 +729,7 @@ Item {
     function reportKeyboardVisibleRect() {
 
         var vx = 0;
-        var vy = wordRibbon.y;
+        var vy = dictationStrip.visible ? dictationStrip.y : wordRibbon.y;
         var vwidth = keyboardSurface.width;
         var vheight = keyboardComp.height + wordRibbon.height;
 
