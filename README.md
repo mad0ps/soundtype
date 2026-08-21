@@ -95,34 +95,26 @@ cd soundtype
 ### Как установить интеграцию:
 
 **Внимание: это требует внесения изменений в системный раздел Ubuntu Touch! Вы делаете это на свой страх и риск.**
+> [!WARNING]
+> Поскольку эта установка меняет системный файл клавиатуры, после каждого OTA-обновления операционной системы ваши изменения будут затираться. Вам потребуется запускать `install.sh` заново после каждого апдейта системы!
 
-1. Перемонтируйте корневую файловую систему для записи:
+1. Перейдите в папку с интеграцией:
 ```sh
-sudo mount -o remount,rw /
+cd extras/keyboard-integration
 ```
 
-2. Установите сервис демона и запустите его:
+2. Запустите скрипт установки (он сам попросит пароль для `sudo`, чтобы перемонтировать ФС и пропатчить системный файл):
 ```sh
-mkdir -p ~/.config/systemd/user/
-cp soundtype-daemon.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now soundtype-daemon.service
-```
-
-3. Пропатчите системную клавиатуру (обязательно сделайте бекап!):
-```sh
-sudo cp /usr/share/maliit/plugins/lomiri-keyboard/FloatingActions.qml /usr/share/maliit/plugins/lomiri-keyboard/FloatingActions.qml.bak
-sudo cp FloatingActions.qml /usr/share/maliit/plugins/lomiri-keyboard/FloatingActions.qml
-```
-
-4. Убедитесь, что скрипт `soundtype_dbus_listener.py` лежит в папке `py` основного проекта.
-
-5. Перезапустите сервер клавиатуры, чтобы применить изменения:
-```sh
-systemctl --user restart maliit-server
+./install.sh
 ```
 
 После этого вы можете использовать голосовой ввод прямо из свайп-меню (верхний свайп по клавиатуре).
+
+### Как удалить интеграцию:
+Просто запустите скрипт удаления из той же папки:
+```sh
+./uninstall.sh
+```
 
 ---
 

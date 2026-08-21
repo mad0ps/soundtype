@@ -62,7 +62,7 @@ RowLayout {
     Python {
         id: python
         Component.onCompleted: {
-            addImportPath('/home/phablet/soundtype/py');
+            addImportPath('SOUNDTYPE_PY_PATH');
             setHandler('statusChanged', function(newStatus) {
                 dictationButton.status = newStatus;
                 if (newStatus === "recording" || newStatus === "processing") {

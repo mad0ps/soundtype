@@ -18,12 +18,13 @@ class PyOtherSideMock:
             text = args[0] if args else ""
             self.dbus_obj.TranscriptionReady(text)
         elif event == 'partial':
-            # partial(idx, text) — фраза распозналась по ходу записи
             if len(args) > 1 and args[1]:
                 self.dbus_obj.PartialReady(str(args[1]))
         elif event == 'recording':
             if args[0]:
                 self.dbus_obj.StatusChanged("recording")
+            else:
+                self.dbus_obj.StatusChanged("processing")
         elif event == 'transcribing':
             if args[0]:
                 self.dbus_obj.StatusChanged("processing")
@@ -31,16 +32,35 @@ class PyOtherSideMock:
                 self.dbus_obj.StatusChanged("ready")
         elif event == 'ready':
             self.dbus_obj.StatusChanged("ready")
+            if self.dbus_obj.pending_start:
+                self.dbus_obj.pending_start = False
+                backend.start()
+        elif event == 'deps-missing':
+            print("Error: Missing dependencies or model.", flush=True)
+            self.dbus_obj.Error("deps-missing")
+            self.dbus_obj.listening = False
+            self.dbus_obj.initialized = False
         elif event == 'error':
             self.dbus_obj.Error(str(args[0]))
+            self.dbus_obj.listening = False
+            self.dbus_obj.pending_start = False
 
 class SoundTypeService(dbus.service.Object):
     def __init__(self, bus, path):
         super().__init__(bus, path)
         self.listening = False
+        self.initialized = False
+        self.pending_start = False
 
     @dbus.service.method("com.n0madd3v0ps.soundtype", in_signature='', out_signature='')
     def ToggleDictation(self):
+        if not self.initialized:
+            self.initialized = True
+            self.pending_start = True
+            self.StatusChanged("processing")
+            backend.init()
+            return
+
         if not self.listening:
             self.listening = True
             backend.start()
@@ -72,14 +92,13 @@ service = SoundTypeService(bus, "/com/n0madd3v0ps/soundtype")
 # Заглушаем pyotherside
 sys.modules['pyotherside'] = PyOtherSideMock(service)
 
-# Добавляем путь к питонячим исходникам SoundType
-sys.path.insert(0, '/home/phablet/soundtype/py')
+# Динамический путь к исходникам SoundType (на две папки выше, затем /py)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+soundtype_py_dir = os.path.abspath(os.path.join(script_dir, '..', '..', 'py'))
+sys.path.insert(0, soundtype_py_dir)
 import backend
 
-# Инициализируем бэкенд (подгружаем нейросеть)
-backend.init()
-
-print("SoundType D-Bus Daemon is running...", flush=True)
+print("SoundType D-Bus Daemon is running (lazy load mode)...", flush=True)
 loop = GLib.MainLoop()
 try:
     loop.run()
