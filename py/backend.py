@@ -50,6 +50,14 @@ VAD_WINDOW = 512                  # silero работает окнами по 51
 CHUNK_BYTES = VAD_WINDOW * 2 * 4  # 4 окна = 0.128 с: level для волны ~8 раз/с
 
 MAX_SPEECH = 30.0
+# Нарезка и стыки фраз (ресёрч 21.08: faster-whisper 2.0s+pad400, whisperX
+# чанки 30с; полные предложения дают модели +20-25% качества пунктуации,
+# arxiv 2409.05601). Паузы обдумывания 0.4-0.8с не должны рвать предложение.
+MIN_SILENCE = 1.0        # было 0.35 — резало речь на подфразовые обрывки
+MIN_SPEECH = 0.25
+PAD_PRE = 0.4            # сек контекста перед сегментом (sherpa-onnx#3035)
+PAD_POST = 0.25          # сек хвоста после сегмента
+CAP_PAUSE = 1.5          # пауза, после которой стык считаем новым предложением
 VAD_BUFFER_SECONDS = 120
 MAX_RECORD_SECONDS = 600
 
@@ -279,8 +287,8 @@ class Dictation(object):
                 cfg = sherpa_onnx.VadModelConfig()
                 cfg.silero_vad.model = os.path.join(MODELS, 'silero_vad.onnx')
                 cfg.silero_vad.threshold = 0.5
-                cfg.silero_vad.min_silence_duration = 0.35
-                cfg.silero_vad.min_speech_duration = 0.20
+                cfg.silero_vad.min_silence_duration = MIN_SILENCE
+                cfg.silero_vad.min_speech_duration = MIN_SPEECH
                 cfg.silero_vad.max_speech_duration = MAX_SPEECH
                 cfg.sample_rate = RATE
                 vad = sherpa_onnx.VoiceActivityDetector(
@@ -398,11 +406,12 @@ class Dictation(object):
     def _split(self, pcm):
         """Режем запись на фразы. Общий механизм с потоковым режимом."""
         self.vad.reset()
-        seg = streaming.Segmenter(self.vad, self.np, VAD_WINDOW)
+        seg = streaming.Segmenter(self.vad, self.np, VAD_WINDOW, rate=RATE,
+                                  pad_pre=PAD_PRE, pad_post=PAD_POST)
         segments = seg.feed(pcm)
         segments += seg.flush()
         if not segments and len(pcm):
-            segments = [pcm]
+            segments = [streaming.Phrase(pcm, len(pcm), None)]
         return segments
 
     def _decode(self, samples):
@@ -417,31 +426,35 @@ class Dictation(object):
         pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
         segments = self._split(pcm)
         texts = []
-        for idx, seg in enumerate(segments, 1):
-            if len(seg) < RATE * 0.2:
+        for idx, phrase in enumerate(segments, 1):
+            if phrase.speech_len < RATE * 0.2:
                 continue
             emit('progress', idx, len(segments))
             try:
-                text = self._decode(seg)
+                text = self._decode(phrase.samples)
             except Exception as exc:
                 emit('error', 'Сбой распознавания: %s' % exc)
                 continue
             if text:
-                texts.append(text)
-        return ' '.join(texts).strip()
+                prev = texts[-1] if texts else None
+                glue, cap = streaming.phrase_glue(prev, phrase.gap, CAP_PAUSE)
+                texts.append(glue + (streaming.capitalize_first(text) if cap
+                                     else text))
+        return ''.join(texts).strip()
 
     def _session(self):
         worker = None
         try:
             np = self.np
             self.vad.reset()
-            seg = streaming.Segmenter(self.vad, np, VAD_WINDOW)
+            seg = streaming.Segmenter(self.vad, np, VAD_WINDOW, rate=RATE,
+                                      pad_pre=PAD_PRE, pad_post=PAD_POST)
             worker = streaming.DecodeWorker(
                 self._decode,
                 on_text=lambda idx, text: emit('partial', idx, text),
                 on_error=lambda exc: emit('error',
                                           'Сбой распознавания: %s' % exc),
-                min_samples=int(RATE * 0.2))
+                min_samples=int(RATE * 0.2), cap_pause=CAP_PAUSE)
 
             queued = [False]  # хоть один сегмент дошёл до воркера
 

@@ -554,7 +554,7 @@ Item {
             });
             setHandler('partialReady', function(text) {
                 if (text !== "") {
-                    fullScreenItem.dictationQueue += text + " ";
+                    fullScreenItem.dictationQueue += text;
                 }
             });
             importModule('soundtype_dbus_listener', function() {

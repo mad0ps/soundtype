@@ -27,7 +27,10 @@ def test_returns_ready_segments():
     s = Segmenter(vad, np, window=512)
     vad.pending.append(make_segment([0.1] * 800))
     got = s.feed(np.zeros(512, dtype=np.float32))
-    assert got == [[0.1] * 800]
+    assert len(got) == 1
+    assert got[0].samples == [0.1] * 800
+    assert got[0].speech_len == 800
+    assert got[0].gap is None
 
 
 def test_flush_feeds_tail_and_drains():
@@ -39,4 +42,46 @@ def test_flush_feeds_tail_and_drains():
     got = s.flush()
     assert vad.flushed
     assert len(vad.windows) == 1 and len(vad.windows[0]) == 300
-    assert got == [[0.2] * 640]
+    assert len(got) == 1 and got[0].samples == [0.2] * 640
+
+
+def _mk(samples, start):
+    seg = make_segment(samples)
+    seg.start = start
+    return seg
+
+
+def test_padding_and_gap():
+    vad = FakeVad()
+    s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.1, pad_post=0.05)
+    stream = np.arange(2000, dtype=np.float32)
+
+    s.feed(stream[:500])
+    vad.pending.append(_mk(stream[200:300], 200))
+    got = s.feed(stream[500:600])
+    assert len(got) == 1
+    p = got[0]
+    # паддинг: 100 отсчётов до + 50 после, ограничен скормленным (600)
+    assert p.samples[0] == 100.0 and p.samples[-1] == 349.0
+    assert p.speech_len == 100
+    assert p.gap is None
+
+    vad.pending.append(_mk(stream[500:600], 500))
+    got = s.feed(stream[600:700])
+    p = got[0]
+    assert p.gap == (500 - 300) / 1000.0
+    # pre-pad не залезает в предыдущий сегмент (его конец = 300)
+    assert p.samples[0] == 400.0 and p.samples[-1] == 649.0
+
+
+def test_pre_pad_capped_by_previous_segment():
+    vad = FakeVad()
+    s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.5, pad_post=0.0)
+    stream = np.arange(1000, dtype=np.float32)
+    s.feed(stream[:400])
+    vad.pending.append(_mk(stream[100:200], 100))
+    s.feed(stream[400:500])
+    vad.pending.append(_mk(stream[300:400], 300))
+    got = s.feed(stream[500:600])
+    # pad_pre=500 хочет с 0, но конец предыдущего сегмента = 200
+    assert got[0].samples[0] == 200.0

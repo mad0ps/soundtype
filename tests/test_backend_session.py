@@ -36,17 +36,17 @@ def test_session_streams_segments(events, monkeypatch):
     eng._session()
 
     assert [e for e in events if e[0] == 'partial'] == \
-        [('partial', 1, 'слово8000')]
+        [('partial', 1, 'Слово8000')]
     finals = [e for e in events if e[0] == 'final']
-    assert finals and finals[0][1] == 'слово8000'
-    assert ('done', 'слово8000') in events
+    assert finals and finals[0][1] == 'Слово8000'
+    assert ('done', 'Слово8000') in events
     assert vad.flushed             # хвост дожат на стопе
     assert vad.resets == 1         # VAD сброшен перед сессией
 
     # I3/тест-пункт 3: _history_append и _audio_save реально дошли до
     # финального текста и до сырых байт записи.
     assert len(history_calls) == 1
-    assert history_calls[0][0] == 'слово8000'
+    assert history_calls[0][0] == 'Слово8000'
     assert len(audio_calls) == 1
     assert audio_calls[0][1] == chunk * 40
 
@@ -58,7 +58,7 @@ def test_on_chunk_exception_does_not_lose_recording(events, monkeypatch):
     eng.np = np
     eng.vad = FakeVad()
     eng.recognizer = object()
-    monkeypatch.setattr(eng, '_decode', lambda seg: 'текст')
+    monkeypatch.setattr(eng, '_decode', lambda seg: 'Текст')
 
     chunk = b'\x10\x00' * 4096
     calls = []
@@ -84,7 +84,7 @@ def test_on_chunk_exception_does_not_lose_recording(events, monkeypatch):
     # ни один сегмент не был поставлен в очередь (on_chunk упал сразу) —
     # I4-фолбэк должен декодировать всю запись целиком.
     done = [e for e in events if e[0] == 'done']
-    assert done and done[0][1] == 'текст'
+    assert done and done[0][1] == 'Текст'
     assert not [e for e in events if e[0] == 'error'
                 and 'бум' in str(e[1])]
 
@@ -96,7 +96,7 @@ def test_vad_never_yields_segments_falls_back_to_whole_buffer(events,
     eng.np = np
     eng.vad = FakeVad()   # pending всегда пуст — ни одного сегмента
     eng.recognizer = object()
-    monkeypatch.setattr(eng, '_decode', lambda seg: 'вся запись')
+    monkeypatch.setattr(eng, '_decode', lambda seg: 'Вся запись')
 
     chunk = b'\x10\x00' * 4096
     monkeypatch.setattr(eng, '_record', lambda on_chunk=None: chunk * 40)
@@ -106,8 +106,8 @@ def test_vad_never_yields_segments_falls_back_to_whole_buffer(events,
     eng._session()
 
     finals = [e for e in events if e[0] == 'final']
-    assert finals and finals[0][1] == 'вся запись'
-    assert ('done', 'вся запись') in events
+    assert finals and finals[0][1] == 'Вся запись'
+    assert ('done', 'Вся запись') in events
 
 
 def test_short_recording_gives_empty_done(events, monkeypatch):

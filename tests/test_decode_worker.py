@@ -8,8 +8,8 @@ def test_decodes_in_order_and_reports():
                      on_text=lambda idx, t: calls.append((idx, t)))
     w.put([0.0] * 10)
     w.put([0.0] * 20)
-    assert w.close(timeout=5) == 'txt-10 txt-20'
-    assert calls == [(1, 'txt-10'), (2, 'txt-20')]
+    assert w.close(timeout=5) == 'Txt-10 txt-20'
+    assert calls == [(1, 'Txt-10'), (2, ' txt-20')]
 
 
 def test_skips_short_segments():
@@ -31,7 +31,7 @@ def test_error_does_not_kill_worker():
                      on_error=lambda exc: errors.append(str(exc)))
     w.put([0.0])
     w.put([0.0, 0.0])
-    assert w.close(timeout=5) == 'ok'
+    assert w.close(timeout=5) == 'Ok'
     assert errors == ['boom']
 
 

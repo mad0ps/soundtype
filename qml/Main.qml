@@ -130,7 +130,7 @@ MainView {
                     : "Расшифровываю…";
             });
             setHandler("partial", function (idx, t) {
-                root.partialText += (root.partialText.length ? " " : "") + t;
+                root.partialText += t;
             });
             setHandler("final", function (t, ts) {
                 root.appendText(t);
