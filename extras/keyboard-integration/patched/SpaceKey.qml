@@ -53,7 +53,7 @@ ActionKey {
     Icon {
         id: micIndicator
         name: "audio-input-microphone-symbolic"
-        width: units.gu(2)
+        width: units.gu(2.6)
         height: width
         anchors.verticalCenter: langLabel.verticalCenter
         anchors.left: parent.left
@@ -71,7 +71,7 @@ ActionKey {
     // (стиль WhatsApp). Данные — fullScreenItem.dictationWave.
     Row {
         id: spaceWave
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenter: micIndicator.verticalCenter
         anchors.left: micIndicator.right
         anchors.leftMargin: units.gu(0.8)
         anchors.right: parent.right
@@ -101,7 +101,7 @@ ActionKey {
                         return units.gu(2.2) * Math.max(0.09, Math.min(1.0, v));
                     }
                     Behavior on height {
-                        NumberAnimation { duration: 55 }
+                        NumberAnimation { duration: 30 }
                     }
                 }
             }
