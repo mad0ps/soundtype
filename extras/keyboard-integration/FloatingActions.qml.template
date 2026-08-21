@@ -17,18 +17,13 @@ RowLayout {
         topMargin: toolbar.height + units.gu(1)
     }
 
-    // «Машинистка»: печатаем распознанные фразы посимвольно, как живой набор
-    property string typeQueue: ""
-    property bool pendingExit: false
-
-    // Пока идёт запись/распознавание/печать — свайп-меню не имеет права
+    // Пока идёт запись/распознавание — свайп-меню не имеет права
     // закрыться по таймауту, кто бы ни рестартил таймер в стоковом коде.
     readonly property bool dictationBusy: dictationButton.status === "recording"
                                           || dictationButton.status === "processing"
-                                          || typeQueue.length > 0
 
     onDictationBusyChanged: {
-        if (!dictationBusy && !pendingExit) {
+        if (!dictationBusy) {
             fullScreenItem.timerSwipe.restart();
         }
     }
@@ -38,23 +33,6 @@ RowLayout {
         onRunningChanged: {
             if (fullScreenItem.timerSwipe.running && root.dictationBusy) {
                 fullScreenItem.timerSwipe.stop();
-            }
-        }
-    }
-
-    Timer {
-        id: typewriter
-        interval: 18
-        repeat: true
-        running: root.typeQueue.length > 0
-        onTriggered: {
-            if (root.typeQueue.length > 0) {
-                event_handler.onKeyReleased(root.typeQueue.charAt(0));
-                root.typeQueue = root.typeQueue.substring(1);
-            }
-            if (root.typeQueue.length === 0 && root.pendingExit) {
-                root.pendingExit = false;
-                fullScreenItem.exitSwipeMode();
             }
         }
     }
@@ -72,18 +50,14 @@ RowLayout {
                 }
             });
             setHandler('partialReady', function(text) {
-                // фраза распозналась — в очередь «машинистки»
+                // фраза распозналась — печатаем сразу, пока идёт запись
                 if (text !== "") {
-                    root.typeQueue += text + " ";
+                    event_handler.onKeyReleased(text + " ");
                 }
             });
             setHandler('transcriptionReady', function(text) {
-                // закрываем меню, когда машинистка допечатает
-                if (root.typeQueue.length === 0) {
-                    fullScreenItem.exitSwipeMode();
-                } else {
-                    root.pendingExit = true;
-                }
+                // весь текст уже напечатан частями — только закрываем меню
+                fullScreenItem.exitSwipeMode();
             });
             importModule('soundtype_dbus_listener', function() {
                 python.call('soundtype_dbus_listener.init', []);
