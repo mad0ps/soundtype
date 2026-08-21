@@ -66,42 +66,68 @@ ActionKey {
         opacity: 0.9
     }
 
-    // SoundType: волна-история во всю ширину пробела — новые бары рождаются
-    // справа с текущей громкостью, старые уползают влево и затухают
-    // (стиль WhatsApp). Данные — fullScreenItem.dictationWave.
-    Row {
+    // SoundType: волна-история — непрерывный конвейер. Высоты баров не
+    // анимируются: лента физически ползёт влево с постоянной скоростью
+    // (линейный слайд на 4 шага за период замера, 32 бара/сек), новые бары
+    // заезжают из-за правого края под клипом. Так нет степ-энд-гоу.
+    Item {
         id: spaceWave
+        clip: true
         anchors.verticalCenter: micIndicator.verticalCenter
         anchors.left: micIndicator.right
         anchors.leftMargin: units.gu(0.8)
         anchors.right: parent.right
         anchors.rightMargin: units.gu(1)
-        spacing: units.gu(0.3)
+        height: units.gu(2.2)
         visible: micIndicator.visible
                  && (fullScreenItem.dictationStatus === "recording"
                      || fullScreenItem.dictationStatus === "processing")
-        property int bars: Math.max(6, Math.floor(width / units.gu(0.65)))
 
-        Repeater {
-            model: spaceWave.bars
-            delegate: Item {
-                width: units.gu(0.35)
-                height: units.gu(2.2)
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: parent.width
-                    radius: width / 2
-                    color: fullScreenItem.dictationMicSilent ? "gray"
-                         : fullScreenItem.dictationStatus === "processing" ? "gold"
-                         : "red"
-                    height: {
-                        var arr = fullScreenItem.dictationWave;
-                        var i = arr.length - spaceWave.bars + index;
-                        var v = i >= 0 ? arr[i] : 0.0;
-                        return units.gu(2.2) * Math.max(0.09, Math.min(1.0, v));
-                    }
-                    Behavior on height {
-                        NumberAnimation { duration: 30 }
+        property real step: units.gu(0.65)
+        property int bars: Math.max(8, Math.floor(width / step) + 5)
+        property real slide: 0
+
+        Connections {
+            target: fullScreenItem
+            onDictationWaveChanged: {
+                spaceWave.slide = 4 * spaceWave.step;
+                waveSlideAnim.restart();
+            }
+        }
+
+        NumberAnimation {
+            id: waveSlideAnim
+            target: spaceWave
+            property: "slide"
+            to: 0
+            duration: 125
+            easing.type: Easing.Linear
+        }
+
+        Row {
+            id: waveRow
+            spacing: units.gu(0.3)
+            x: spaceWave.width - width + spaceWave.slide
+            anchors.verticalCenter: parent.verticalCenter
+
+            Repeater {
+                model: spaceWave.bars
+                delegate: Item {
+                    width: units.gu(0.35)
+                    height: units.gu(2.2)
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: parent.width
+                        radius: width / 2
+                        color: fullScreenItem.dictationMicSilent ? "gray"
+                             : fullScreenItem.dictationStatus === "processing" ? "gold"
+                             : "red"
+                        height: {
+                            var arr = fullScreenItem.dictationWave;
+                            var i = arr.length - spaceWave.bars + index;
+                            var v = i >= 0 ? arr[i] : 0.0;
+                            return parent.height * Math.max(0.09, Math.min(1.0, v));
+                        }
                     }
                 }
             }
