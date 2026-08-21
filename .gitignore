@@ -15,3 +15,8 @@ __pycache__/
 
 ut-build/
 build/
+
+# eval harness private data (Khan's voice and texts — never commit)
+eval/corpus/
+eval/runs/
+eval/reports/

@@ -1,0 +1,8 @@
+# domain terms checked by recall metric — extend freely
+клод
+убунту
+терминал
+демон
+клавиатура
+диктовка
+коммит
