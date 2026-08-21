@@ -84,13 +84,24 @@ ActionKey {
                      || fullScreenItem.dictationStatus === "processing")
 
         property real step: units.gu(0.65)
-        property int bars: Math.max(8, Math.floor(width / step) + 5)
+        property int bars: Math.max(8, Math.floor(width / step) + 10)
         property real slide: 0
+        // скорость ленты, px/с: 4 шага за номинальный период замера 125 мс
+        property real beltSpeed: 4 * step / 0.125
 
+        // Замеры приходят с джиттером (аудио-цикл + D-Bus). Сброс к
+        // фиксированному отступу давал рывок; вместо этого остаток пути
+        // НАКАПЛИВАЕТСЯ, а длительность анимации считается из постоянной
+        // скорости — лента едет ровно при любом дрожании таймингов.
         Connections {
             target: fullScreenItem
             onDictationWaveChanged: {
-                spaceWave.slide = 4 * spaceWave.step;
+                waveSlideAnim.stop();
+                var s = spaceWave.slide + 4 * spaceWave.step;
+                var cap = 8 * spaceWave.step;
+                if (s > cap) s = cap;   // не даём очереди разгоняться
+                spaceWave.slide = s;
+                waveSlideAnim.duration = 1000 * s / spaceWave.beltSpeed;
                 waveSlideAnim.restart();
             }
         }
@@ -100,7 +111,6 @@ ActionKey {
             target: spaceWave
             property: "slide"
             to: 0
-            duration: 125
             easing.type: Easing.Linear
         }
 
