@@ -29,15 +29,26 @@ rm -f "$KB/FloatingActions.qml.bak"
 sync
 mount -o remount,ro / || echo "WARNING: could not remount / read-only (harmless, reboot restores it)"
 
-echo "Installing and restarting soundtype-daemon.service for user phablet..."
-sudo -u phablet bash -c "
-    mkdir -p ~/.config/systemd/user/
-    cp '$DIR/../../soundtype-daemon.service' ~/.config/systemd/user/
-    export XDG_RUNTIME_DIR=/run/user/\$(id -u)
-    systemctl --user daemon-reload
-    systemctl --user enable soundtype-daemon.service
-    systemctl --user restart soundtype-daemon.service
-"
+# systemd user unit for the daemon; the unit file location depends on how
+# this directory was deployed: full repo checkout vs extras/ pushed into
+# /home/phablet/soundtype/ (README flow)
+SVC=""
+for cand in "$DIR/../../soundtype-daemon.service" /home/phablet/soundtype/soundtype-daemon.service; do
+    if [ -f "$cand" ]; then SVC="$cand"; break; fi
+done
+if [ -n "$SVC" ]; then
+    echo "Installing and restarting soundtype-daemon.service for user phablet..."
+    sudo -u phablet bash -c "
+        mkdir -p ~/.config/systemd/user/
+        cp '$SVC' ~/.config/systemd/user/
+        export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+        systemctl --user daemon-reload
+        systemctl --user enable soundtype-daemon.service
+        systemctl --user restart soundtype-daemon.service
+    " || echo "WARNING: daemon service install failed — start soundtype-dbus.py manually"
+else
+    echo "WARNING: soundtype-daemon.service not found — daemon service not installed"
+fi
 
 pkill -f maliit-server || true
 echo "OK: installed. The keyboard restarts on next focus; hold space (no movement) toggles dictation."
