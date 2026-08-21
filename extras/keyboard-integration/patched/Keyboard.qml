@@ -74,11 +74,10 @@ Item {
         var m = 1.0 - Math.pow(0.1, 24.0 * raw);
         dictationEnvelope = (m > dictationEnvelope)
             ? m : dictationEnvelope + (m - dictationEnvelope) * 0.35;
-        var w = dictationWave.slice(-44);
+        var w = dictationWave.slice(-45);
         var prev = w.length ? w[w.length - 1] : 0.0;
-        w.push(prev * 0.75 + dictationEnvelope * 0.25);
-        w.push(prev * 0.5 + dictationEnvelope * 0.5);
-        w.push(prev * 0.25 + dictationEnvelope * 0.75);
+        w.push(prev * 0.67 + dictationEnvelope * 0.33);
+        w.push(prev * 0.33 + dictationEnvelope * 0.67);
         w.push(dictationEnvelope);
         dictationWave = w;
         if (m > 0.04) {

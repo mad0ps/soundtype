@@ -83,11 +83,11 @@ ActionKey {
                  && (fullScreenItem.dictationStatus === "recording"
                      || fullScreenItem.dictationStatus === "processing")
 
-        property real step: units.gu(0.65)
-        property int bars: Math.max(8, Math.floor(width / step) + 10)
+        property real step: units.gu(0.8)
+        property int bars: Math.max(8, Math.floor(width / step) + 8)
         property real slide: 0
-        // скорость ленты, px/с: 4 шага за номинальный период замера 125 мс
-        property real beltSpeed: 4 * step / 0.125
+        // скорость ленты, px/с: 3 шага за номинальный период замера 125 мс
+        property real beltSpeed: 3 * step / 0.125
 
         // Замеры приходят с джиттером (аудио-цикл + D-Bus). Сброс к
         // фиксированному отступу давал рывок; вместо этого остаток пути
@@ -97,8 +97,8 @@ ActionKey {
             target: fullScreenItem
             onDictationWaveChanged: {
                 waveSlideAnim.stop();
-                var s = spaceWave.slide + 4 * spaceWave.step;
-                var cap = 8 * spaceWave.step;
+                var s = spaceWave.slide + 3 * spaceWave.step;
+                var cap = 6 * spaceWave.step;
                 if (s > cap) s = cap;   // не даём очереди разгоняться
                 spaceWave.slide = s;
                 waveSlideAnim.duration = 1000 * s / spaceWave.beltSpeed;
@@ -116,14 +116,14 @@ ActionKey {
 
         Row {
             id: waveRow
-            spacing: units.gu(0.3)
+            spacing: units.gu(0.4)
             x: spaceWave.width - width + spaceWave.slide
             anchors.verticalCenter: parent.verticalCenter
 
             Repeater {
                 model: spaceWave.bars
                 delegate: Item {
-                    width: units.gu(0.35)
+                    width: units.gu(0.4)
                     height: units.gu(2.2)
                     Rectangle {
                         anchors.centerIn: parent
@@ -136,7 +136,9 @@ ActionKey {
                             var arr = fullScreenItem.dictationWave;
                             var i = arr.length - spaceWave.bars + index;
                             var v = i >= 0 ? arr[i] : 0.0;
-                            return parent.height * Math.max(0.09, Math.min(1.0, v));
+                            // минимум = ширина бара: в тишине идеальный кружок
+                            return Math.max(parent.width,
+                                            parent.height * Math.min(1.0, v));
                         }
                     }
                 }
