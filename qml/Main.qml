@@ -24,6 +24,8 @@ MainView {
     property string progressText: ""
     property string partialText: ""
     property bool autoCopy: true
+    property string activeModel: "parakeet"
+    property bool modelSwitchBusy: false
     property real retryTs: 0
     property bool depsMissing: false
     property bool downloading: false
@@ -171,6 +173,13 @@ MainView {
             setHandler("error", function (msg) {
                 root.statusText = "Ошибка: " + msg;
                 toast.show(msg);
+            });
+            setHandler("model", function (name) {
+                root.activeModel = name;
+                root.modelSwitchBusy = false;
+                // движок только что выгружен (смена профиля) либо ещё не
+                // загружен (старт) — микрофон разблокирует событие 'ready'
+                root.ready = false;
             });
 
             importModule("backend", function () {
@@ -348,6 +357,36 @@ MainView {
                         wrapMode: Text.Wrap
                         verticalAlignment: Text.AlignVCenter
                     }
+                }
+
+                // ---------- модель распознавания ----------
+                Label {
+                    text: "Модель распознавания"
+                    fontSize: "small"
+                    color: theme.palette.normal.backgroundSecondaryText
+                }
+                OptionSelector {
+                    id: modelSelector
+                    Layout.fillWidth: true
+                    model: ["Мультиязычная (Parakeet v3)",
+                            "Русская (GigaAM-v3)"]
+                    enabled: !root.modelSwitchBusy && !root.recording && !root.transcribing
+                    selectedIndex: root.activeModel === "gigaam" ? 1 : 0
+                    onDelegateClicked: function (index) {
+                        var name = index === 1 ? "gigaam" : "parakeet";
+                        if (name === root.activeModel)
+                            return;
+                        root.modelSwitchBusy = true;
+                        py.call("backend.set_model", [name]);
+                    }
+                }
+                Label {
+                    visible: root.activeModel === "gigaam"
+                    text: "Русский профиль: пунктуация и ё из коробки"
+                    fontSize: "x-small"
+                    color: theme.palette.normal.backgroundTertiaryText
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
                 }
 
                 // ---------- кнопка записи ----------
