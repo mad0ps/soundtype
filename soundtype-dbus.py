@@ -56,6 +56,12 @@ class PyOtherSideMock:
                 svc.pending_start = False
                 svc.loaded = False
             svc.Error(str(args[0]))
+        elif event == 'deps-missing':
+            # выбранная модель ещё не скачана (переключили в приложении):
+            # не зависаем в «занят», индикатор в серый
+            svc.pending_start = False
+            svc.loaded = False
+            svc.StatusChanged("unloaded")
 
 class SoundTypeService(dbus.service.Object):
     def __init__(self, bus, path):
@@ -120,6 +126,14 @@ class SoundTypeService(dbus.service.Object):
         if not self.listening:
             self.listening = True
             self.keep_display_on()
+            # профиль сменили из приложения — выгружаем старый движок,
+            # ленивый путь ниже загрузит актуальный
+            if self.loaded and backend.model_stale():
+                try:
+                    backend.unload()
+                except Exception as exc:
+                    print(f"stale unload failed: {exc}", flush=True)
+                self.loaded = False
             if not self.loaded:
                 self.loaded = True
                 self.pending_start = True
