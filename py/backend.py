@@ -43,6 +43,7 @@ sys.path.insert(0, os.path.join(RUNTIME, 'pylibs'))
 import pyotherside  # noqa: E402
 import streaming  # noqa: E402
 import downloader  # noqa: E402
+import models  # noqa: E402
 
 RATE = 16000
 CHANNELS = 1
@@ -252,6 +253,7 @@ def history_clear():
 class Dictation(object):
     def __init__(self):
         self.recognizer = None
+        self.model_name = None
         self.vad = None
         self.np = None
         self.thread = None
@@ -273,12 +275,13 @@ class Dictation(object):
                 import numpy as np
                 import sherpa_onnx
 
-                pk = os.path.join(MODELS, 'parakeet')
+                active = models.get_active(DATA)
+                mf = models.model_files(active, DATA)
                 rec = sherpa_onnx.OfflineRecognizer.from_transducer(
-                    encoder=os.path.join(pk, 'encoder.int8.onnx'),
-                    decoder=os.path.join(pk, 'decoder.int8.onnx'),
-                    joiner=os.path.join(pk, 'joiner.int8.onnx'),
-                    tokens=os.path.join(pk, 'tokens.txt'),
+                    encoder=mf['encoder'],
+                    decoder=mf['decoder'],
+                    joiner=mf['joiner'],
+                    tokens=mf['tokens'],
                     num_threads=4,
                     model_type='nemo_transducer',
                     debug=False,
@@ -297,6 +300,7 @@ class Dictation(object):
                 with self.lock:
                     self.np = np
                     self.recognizer = rec
+                    self.model_name = active
                     self.vad = vad
                 emit('ready', 'parakeet-tdt-0.6b-v3')
             except Exception as exc:
@@ -307,6 +311,7 @@ class Dictation(object):
         import gc
         with self.lock:
             self.recognizer = None
+            self.model_name = None
             self.vad = None
         gc.collect()
         # glibc не отдаёт освобождённую кучу ОС сам — без trim RSS остаётся
@@ -548,7 +553,27 @@ class Dictation(object):
 _engine = Dictation()
 
 
+def model_stale():
+    """Движок загружен, но профиль в настройках уже другой."""
+    return (_engine.recognizer is not None
+            and _engine.model_name != models.get_active(DATA))
+
+
+def set_model(name):
+    """Выбор профиля из настроек приложения."""
+    models.set_active(name, DATA)
+    if _engine.recognizer is not None:
+        _engine.unload()
+    emit('model', name)
+    miss = downloader.missing()
+    if miss:
+        emit('deps-missing', miss)
+    else:
+        _engine.load()
+
+
 def init(_ignored=None):
+    emit('model', models.get_active(DATA))
     miss = downloader.missing()
     if miss:
         emit('deps-missing', miss)
