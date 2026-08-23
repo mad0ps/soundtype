@@ -20,6 +20,8 @@ import tarfile
 import urllib.request
 import zipfile
 
+import models  # noqa: E402  (py/ модули живут в одном каталоге)
+
 APP = 'soundtype.n0madd3v0ps'
 HOME = os.environ.get('HOME', os.path.expanduser('~'))
 DATA = os.path.join(HOME, '.local', 'share', APP)
@@ -28,6 +30,16 @@ PARAKEET_URL = ('https://github.com/k2-fsa/sherpa-onnx/releases/download/'
                 'asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2')
 SILERO_URL = ('https://github.com/k2-fsa/sherpa-onnx/releases/download/'
               'asr-models/silero_vad.onnx')
+
+GIGAAM_BASE = ('https://huggingface.co/Smirnov75/GigaAM-v3-sherpa-onnx/'
+               'resolve/main/')
+# локальное имя -> имя файла на HF; encoder последним (он же probe)
+GIGAAM_FILES = [
+    ('decoder.onnx', 'gigaam_v3_e2e_rnnt_decoder.onnx'),
+    ('joiner.onnx', 'gigaam_v3_e2e_rnnt_joint.onnx'),
+    ('tokens.txt', 'gigaam_v3_e2e_rnnt_tokens.txt'),
+    ('encoder.int8.onnx', 'gigaam_v3_e2e_rnnt_encoder_int8.onnx'),
+]
 
 # Колёса под Python 3.12 / aarch64 — ровно то, что стоит в Ubuntu Touch 24.04.
 # Четвёртый элемент — файл-маркер готовности: по нему missing() судит, что
@@ -54,7 +66,7 @@ def _pylibs(data_dir):
     return os.path.join(data_dir, 'runtime', 'pylibs')
 
 
-def missing(data_dir=DATA):
+def missing(data_dir=DATA, model=None):
     """Чего не хватает для работы. Пустой список — всё на месте."""
     out = []
     for pkg, _ver, _tag, probe in WHEELS:
@@ -62,9 +74,9 @@ def missing(data_dir=DATA):
             out.append(pkg)
     if not os.path.exists(os.path.join(_models(data_dir), 'silero_vad.onnx')):
         out.append('silero-vad')
-    if not os.path.exists(os.path.join(_models(data_dir), 'parakeet',
-                                       'encoder.int8.onnx')):
-        out.append('parakeet')
+    name = model or models.get_active(data_dir)
+    if not os.path.exists(models.probe_path(name, data_dir)):
+        out.append(name)
     return out
 
 
@@ -203,8 +215,30 @@ def fetch_parakeet(progress=None, data_dir=DATA, force=False):
     os.remove(tmp)
 
 
+def fetch_gigaam(progress=None, data_dir=DATA, force=False):
+    target = models.model_dir('gigaam', data_dir)
+    if os.path.exists(models.probe_path('gigaam', data_dir)) and not force:
+        return
+    os.makedirs(target, exist_ok=True)
+    for local, remote in GIGAAM_FILES:
+        dest = os.path.join(target, local)
+        if os.path.exists(dest) and not force and local != 'encoder.int8.onnx':
+            continue
+        part = dest + '.part'
+        download(GIGAAM_BASE + remote, part, progress=progress,
+                 stage='модель GigaAM (%s)' % local)
+        os.replace(part, dest)
+
+
+def fetch_model(name, progress=None, data_dir=DATA, force=False):
+    if name == 'gigaam':
+        fetch_gigaam(progress, data_dir, force)
+    else:
+        fetch_parakeet(progress, data_dir, force)
+
+
 def fetch_all(progress=None, data_dir=DATA, force=False):
-    """Скачать всё недостающее. Сбой = исключение наружу."""
+    """Скачать всё недостающее для АКТИВНОГО профиля. Сбой = исключение."""
     fetch_wheels(progress, data_dir, force)
     fetch_silero(progress, data_dir, force)
-    fetch_parakeet(progress, data_dir, force)
+    fetch_model(models.get_active(data_dir), progress, data_dir, force)

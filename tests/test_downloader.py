@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import io
+import os
 import tarfile
 
 import pytest
@@ -161,3 +162,84 @@ def test_wheel_merge_does_not_replace_existing_tree(tmp_path, monkeypatch):
     assert (lib / 'libonnxruntime.so').exists()
     assert (tmp_path / 'runtime' / 'pylibs' / 'sherpa_onnx'
             / '__init__.py').exists()
+
+
+def test_missing_is_profile_aware(tmp_path, monkeypatch):
+    import downloader, models
+    d = str(tmp_path)
+    # wheels+silero present so only the model entry differs
+    for pkg, _v, _t, probe in downloader.WHEELS:
+        p = os.path.join(d, 'runtime', 'pylibs', probe)
+        os.makedirs(os.path.dirname(p), exist_ok=True); open(p, 'w').close()
+    os.makedirs(os.path.join(d, 'models'), exist_ok=True)
+    open(os.path.join(d, 'models', 'silero_vad.onnx'), 'w').close()
+
+    assert downloader.missing(d, model='gigaam') == ['gigaam']
+    assert downloader.missing(d, model='parakeet') == ['parakeet']
+    # active profile is used when model=None
+    models.set_active('gigaam', d)
+    assert downloader.missing(d) == ['gigaam']
+    # place the gigaam probe -> clean
+    ep = models.probe_path('gigaam', d)
+    os.makedirs(os.path.dirname(ep), exist_ok=True); open(ep, 'w').close()
+    assert downloader.missing(d) == []
+
+
+def test_fetch_gigaam_downloads_encoder_last(tmp_path, monkeypatch):
+    import downloader, models
+    d = str(tmp_path)
+    calls = []
+
+    def fake_download(url, dest=None, progress=None, stage=''):
+        calls.append(url)
+        open(dest, 'wb').write(b'x')
+        return dest
+
+    monkeypatch.setattr(downloader, 'download', fake_download)
+    downloader.fetch_gigaam(data_dir=d)
+    files = models.model_files('gigaam', d)
+    for path in files.values():
+        assert os.path.exists(path)
+    assert 'encoder_int8' in calls[-1]  # encoder queued last
+    # idempotent: second run downloads nothing
+    calls.clear()
+    downloader.fetch_gigaam(data_dir=d)
+    assert calls == []
+
+
+def test_fetch_gigaam_force_redownloads(tmp_path, monkeypatch):
+    import downloader, models
+    d = str(tmp_path)
+    calls = []
+
+    def fake_download(url, dest=None, progress=None, stage=''):
+        calls.append(url); open(dest, 'wb').write(b'x'); return dest
+
+    monkeypatch.setattr(downloader, 'download', fake_download)
+    downloader.fetch_gigaam(data_dir=d)
+    n_first = len(calls)
+    downloader.fetch_gigaam(data_dir=d, force=True)
+    assert len(calls) == n_first * 2
+
+
+def test_fetch_all_downloads_active_profile(tmp_path, monkeypatch):
+    import downloader, models
+    d = str(tmp_path)
+    models.set_active('gigaam', d)
+    got = []
+    monkeypatch.setattr(downloader, 'fetch_wheels', lambda *a, **k: None)
+    monkeypatch.setattr(downloader, 'fetch_silero', lambda *a, **k: None)
+    monkeypatch.setattr(downloader, 'fetch_model',
+                        lambda name, *a, **k: got.append(name))
+    downloader.fetch_all(data_dir=d)
+    assert got == ['gigaam']
+
+
+def test_fetch_model_dispatch(monkeypatch, tmp_path):
+    import downloader
+    hit = []
+    monkeypatch.setattr(downloader, 'fetch_parakeet', lambda p, d, f: hit.append('p'))
+    monkeypatch.setattr(downloader, 'fetch_gigaam', lambda p, d, f: hit.append('g'))
+    downloader.fetch_model('parakeet', data_dir=str(tmp_path))
+    downloader.fetch_model('gigaam', data_dir=str(tmp_path))
+    assert hit == ['p', 'g']
