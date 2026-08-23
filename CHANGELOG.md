@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.0 — selectable model profiles
+
+* **Model picker in app settings**: "Multilingual (Parakeet v3)" (default) or
+  "Russian (GigaAM-v3 e2e)". The choice persists in `settings.json` and is
+  shared by the app and the keyboard daemon.
+* **GigaAM-v3 e2e int8** (~330 MB, downloaded on demand from Hugging Face):
+  a Russian-specialized model with native punctuation, capitalization and
+  «ё» straight from the decoder. On our own dictation corpus it produces
+  noticeably more coherent Russian than the multilingual profile
+  (see issue #12 for the evaluation data).
+* The keyboard daemon picks up a profile switch on the next dictation start
+  (or after its idle unload); if the newly selected model is not downloaded
+  yet, the keyboard shows the gray indicator instead of hanging busy, and
+  the app offers the download.
+* The engine announces the actually loaded model in the `ready` event.
+
 ## 0.8.0 — dictation in the system keyboard (hold-space)
 
 * **Hold-space gesture**: press and hold the space bar (~0.8 s, haptic
