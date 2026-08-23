@@ -62,6 +62,9 @@ class PyOtherSideMock:
             svc.pending_start = False
             svc.loaded = False
             svc.StatusChanged("unloaded")
+            svc.listening = False
+            svc.release_display_on()
+            svc.start_idle_timer()
 
 class SoundTypeService(dbus.service.Object):
     def __init__(self, bus, path):
