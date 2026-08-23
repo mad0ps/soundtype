@@ -55,3 +55,10 @@ def test_model_stale_logic(monkeypatch):
     assert backend.model_stale() is False
     backend._engine.recognizer = None
     assert backend.model_stale() is False
+
+
+def test_ready_payload_not_hardcoded():
+    import inspect
+    src = inspect.getsource(backend.Dictation.load)
+    assert 'parakeet-tdt-0.6b-v3' not in src
+    assert "emit('ready', active)" in src

@@ -302,7 +302,7 @@ class Dictation(object):
                     self.recognizer = rec
                     self.model_name = active
                     self.vad = vad
-                emit('ready', 'parakeet-tdt-0.6b-v3')
+                emit('ready', active)
             except Exception as exc:
                 emit('error', 'Не удалось загрузить движок: %s' % exc)
         threading.Thread(target=work, daemon=True).start()
