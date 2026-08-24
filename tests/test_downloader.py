@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import hashlib
 import io
 import os
 import tarfile
@@ -6,6 +7,8 @@ import tarfile
 import pytest
 
 import downloader
+
+X_SHA256 = hashlib.sha256(b'x').hexdigest()
 
 
 def test_missing_on_empty_dir(tmp_path):
@@ -196,6 +199,9 @@ def test_fetch_gigaam_downloads_encoder_last(tmp_path, monkeypatch):
         return dest
 
     monkeypatch.setattr(downloader, 'download', fake_download)
+    monkeypatch.setattr(downloader, 'GIGAAM_FILES', [
+        (local, remote, X_SHA256)
+        for local, remote, _sha in downloader.GIGAAM_FILES])
     downloader.fetch_gigaam(data_dir=d)
     files = models.model_files('gigaam', d)
     for path in files.values():
@@ -216,6 +222,9 @@ def test_fetch_gigaam_force_redownloads(tmp_path, monkeypatch):
         calls.append(url); open(dest, 'wb').write(b'x'); return dest
 
     monkeypatch.setattr(downloader, 'download', fake_download)
+    monkeypatch.setattr(downloader, 'GIGAAM_FILES', [
+        (local, remote, X_SHA256)
+        for local, remote, _sha in downloader.GIGAAM_FILES])
     downloader.fetch_gigaam(data_dir=d)
     n_first = len(calls)
     downloader.fetch_gigaam(data_dir=d, force=True)
@@ -243,3 +252,114 @@ def test_fetch_model_dispatch(monkeypatch, tmp_path):
     downloader.fetch_model('parakeet', data_dir=str(tmp_path))
     downloader.fetch_model('gigaam', data_dir=str(tmp_path))
     assert hit == ['p', 'g']
+
+
+def _mark_wheels_and_silero_present(d):
+    for pkg, _v, _t, probe in downloader.WHEELS:
+        p = os.path.join(d, 'runtime', 'pylibs', probe)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, 'w').close()
+    os.makedirs(os.path.join(d, 'models'), exist_ok=True)
+    open(os.path.join(d, 'models', 'silero_vad.onnx'), 'w').close()
+
+
+def test_fetch_gigaam_resumes_partial(tmp_path, monkeypatch):
+    import downloader, models
+    d = str(tmp_path)
+    # Скачивание уже прервано на середине: decoder.onnx на месте, остальное
+    # нет. sha всех файлов подменяем на хэш фейкового содержимого b'x'.
+    monkeypatch.setattr(downloader, 'GIGAAM_FILES', [
+        (local, remote, X_SHA256)
+        for local, remote, _sha in downloader.GIGAAM_FILES])
+    target = models.model_dir('gigaam', d)
+    os.makedirs(target, exist_ok=True)
+    open(os.path.join(target, 'decoder.onnx'), 'wb').write(b'already-here')
+
+    calls = []
+
+    def fake_download(url, dest=None, progress=None, stage=''):
+        calls.append(url)
+        open(dest, 'wb').write(b'x')
+        return dest
+
+    monkeypatch.setattr(downloader, 'download', fake_download)
+    downloader.fetch_gigaam(data_dir=d)
+
+    decoder_remote = dict(
+        (l, r) for l, r, _s in downloader.GIGAAM_FILES)['decoder.onnx']
+    assert not any(decoder_remote in c for c in calls)
+    # существующий decoder.onnx не тронут (не перезаписан фейком)
+    assert open(os.path.join(target, 'decoder.onnx'), 'rb').read() \
+        == b'already-here'
+
+
+def test_fetch_gigaam_part_not_promoted_on_error(tmp_path, monkeypatch):
+    import downloader, models
+    d = str(tmp_path)
+    _mark_wheels_and_silero_present(d)
+    monkeypatch.setattr(downloader, 'GIGAAM_FILES', [
+        (local, remote, X_SHA256)
+        for local, remote, _sha in downloader.GIGAAM_FILES])
+
+    def fake_download(url, dest=None, progress=None, stage=''):
+        if 'encoder' in url:
+            raise RuntimeError('обрыв связи')
+        open(dest, 'wb').write(b'x')
+        return dest
+
+    monkeypatch.setattr(downloader, 'download', fake_download)
+
+    with pytest.raises(RuntimeError, match='обрыв связи'):
+        downloader.fetch_gigaam(data_dir=d)
+
+    target = models.model_dir('gigaam', d)
+    assert not os.path.exists(os.path.join(target, 'encoder.int8.onnx'))
+    assert downloader.missing(d, model='gigaam') == ['gigaam']
+
+
+def test_fetch_gigaam_rejects_bad_checksum(tmp_path, monkeypatch):
+    """Реальная (не подменённая) sha256 из GIGAAM_FILES должна ловить брак."""
+    import downloader, models
+    d = str(tmp_path)
+
+    def fake_download(url, dest=None, progress=None, stage=''):
+        open(dest, 'wb').write(b'not-the-right-bytes')
+        return dest
+
+    monkeypatch.setattr(downloader, 'download', fake_download)
+
+    with pytest.raises(RuntimeError, match='контрольная сумма не совпала'):
+        downloader.fetch_gigaam(data_dir=d)
+
+    target = models.model_dir('gigaam', d)
+    assert not os.path.exists(os.path.join(target, 'decoder.onnx'))
+    assert not os.path.exists(os.path.join(target, 'decoder.onnx.part'))
+
+
+def test_download_raises_on_truncated_body(tmp_path, monkeypatch):
+    """Content-Length=10, но сервер прислал 5 байт и молча закрыл сокет."""
+    import downloader
+
+    class FakeResp:
+        def __init__(self):
+            self.headers = {'Content-Length': '10'}
+            self._data = b'12345'
+
+        def read(self, n=-1):
+            data, self._data = self._data, b''
+            return data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(req, timeout=60):
+        return FakeResp()
+
+    monkeypatch.setattr(downloader.urllib.request, 'urlopen', fake_urlopen)
+
+    dest = tmp_path / 'out.bin'
+    with pytest.raises(RuntimeError, match='обрыв закачки'):
+        downloader.download('http://example.test/file', str(dest))

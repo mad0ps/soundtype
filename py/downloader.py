@@ -12,6 +12,7 @@ pyotherside и print — модуль чистый, его гоняют тест
 Сбой = исключение наружу; докачки нет, повтор качает файл заново.
 """
 
+import hashlib
 import io
 import json
 import os
@@ -32,13 +33,19 @@ SILERO_URL = ('https://github.com/k2-fsa/sherpa-onnx/releases/download/'
               'asr-models/silero_vad.onnx')
 
 GIGAAM_BASE = ('https://huggingface.co/Smirnov75/GigaAM-v3-sherpa-onnx/'
-               'resolve/main/')
-# локальное имя -> имя файла на HF; encoder последним (он же probe)
+               'resolve/6888903da215c7735f51101d939f3bfa679fb2b8/')
+# локальное имя -> (имя файла на HF, sha256); encoder последним (он же probe).
+# Ревизия закреплена в GIGAAM_BASE, а не 'main' — иначе апстрим может
+# подменить файл, и sha256 ниже разойдётся с тем, что реально на сервере.
 GIGAAM_FILES = [
-    ('decoder.onnx', 'gigaam_v3_e2e_rnnt_decoder.onnx'),
-    ('joiner.onnx', 'gigaam_v3_e2e_rnnt_joint.onnx'),
-    ('tokens.txt', 'gigaam_v3_e2e_rnnt_tokens.txt'),
-    ('encoder.int8.onnx', 'gigaam_v3_e2e_rnnt_encoder_int8.onnx'),
+    ('decoder.onnx', 'gigaam_v3_e2e_rnnt_decoder.onnx',
+     '781971998e6a355d6a714f6932a30eab295e7ba0d14fd7e0f78c83b87e811860'),
+    ('joiner.onnx', 'gigaam_v3_e2e_rnnt_joint.onnx',
+     '602ff7017a93311aad34df1437c8d7f49911353c13d6eae7a6ee7b041339465c'),
+    ('tokens.txt', 'gigaam_v3_e2e_rnnt_tokens.txt',
+     '7ddf22514c42c531358182c81446a8159771e9921019f09ae743ea622d40221d'),
+    ('encoder.int8.onnx', 'gigaam_v3_e2e_rnnt_encoder_int8.onnx',
+     '2cac62d0c270bd128f898f2be1a2d34780d524a6e9483888ebac7b00f97410f1'),
 ]
 
 # Колёса под Python 3.12 / aarch64 — ровно то, что стоит в Ubuntu Touch 24.04.
@@ -100,6 +107,10 @@ def download(url, dest=None, progress=None, stage=''):
                     if pct != last:
                         last = pct
                         progress(stage, pct)
+            if dest and total and got != total:
+                raise RuntimeError(
+                    'обрыв закачки: %d из %d байт (%s)' %
+                    (got, total, stage or url))
             if dest:
                 return dest
             return buf.getvalue()
@@ -164,10 +175,21 @@ def fetch_wheels(progress=None, data_dir=DATA, force=False):
             shutil.rmtree(unpack, ignore_errors=True)
 
 
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def fetch_silero(progress=None, data_dir=DATA, force=False):
-    models = _models(data_dir)
-    os.makedirs(models, exist_ok=True)
-    dest = os.path.join(models, 'silero_vad.onnx')
+    mdir = _models(data_dir)
+    os.makedirs(mdir, exist_ok=True)
+    dest = os.path.join(mdir, 'silero_vad.onnx')
     if os.path.exists(dest) and not force:
         return
     part = dest + '.part'
@@ -176,17 +198,17 @@ def fetch_silero(progress=None, data_dir=DATA, force=False):
 
 
 def fetch_parakeet(progress=None, data_dir=DATA, force=False):
-    models = _models(data_dir)
-    os.makedirs(models, exist_ok=True)
-    target = os.path.join(models, 'parakeet')
+    mdir = _models(data_dir)
+    os.makedirs(mdir, exist_ok=True)
+    target = os.path.join(mdir, 'parakeet')
     if os.path.exists(os.path.join(target, 'encoder.int8.onnx')) and not force:
         return
-    tmp = os.path.join(models, '_parakeet.tar.bz2')
+    tmp = os.path.join(mdir, '_parakeet.tar.bz2')
     download(PARAKEET_URL, tmp, progress=progress, stage='модель Parakeet')
 
     if progress is not None:
         progress('распаковка', -1)
-    unpack = os.path.join(models, '_unpack')
+    unpack = os.path.join(mdir, '_unpack')
     shutil.rmtree(unpack, ignore_errors=True)
     os.makedirs(unpack)
     with tarfile.open(tmp, 'r:bz2') as tf:
@@ -220,13 +242,16 @@ def fetch_gigaam(progress=None, data_dir=DATA, force=False):
     if os.path.exists(models.probe_path('gigaam', data_dir)) and not force:
         return
     os.makedirs(target, exist_ok=True)
-    for local, remote in GIGAAM_FILES:
+    for local, remote, sha256 in GIGAAM_FILES:
         dest = os.path.join(target, local)
         if os.path.exists(dest) and not force and local != 'encoder.int8.onnx':
             continue
         part = dest + '.part'
         download(GIGAAM_BASE + remote, part, progress=progress,
                  stage='модель GigaAM (%s)' % local)
+        if _sha256_file(part) != sha256:
+            os.remove(part)
+            raise RuntimeError('контрольная сумма не совпала: %s' % local)
         os.replace(part, dest)
 
 
