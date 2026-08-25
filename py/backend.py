@@ -47,18 +47,17 @@ import models  # noqa: E402
 
 RATE = 16000
 CHANNELS = 1
-VAD_WINDOW = 512                  # silero работает окнами по 512 отсчётов
+VAD_WINDOW = streaming.VAD_WINDOW
 CHUNK_BYTES = VAD_WINDOW * 2 * 4  # 4 окна = 0.128 с: level для волны ~8 раз/с
 
-MAX_SPEECH = 30.0
-# Нарезка и стыки фраз (ресёрч 21.08: faster-whisper 2.0s+pad400, whisperX
-# чанки 30с; полные предложения дают модели +20-25% качества пунктуации,
-# arxiv 2409.05601). Паузы обдумывания 0.4-0.8с не должны рвать предложение.
-MIN_SILENCE = 1.0        # было 0.35 — резало речь на подфразовые обрывки
-MIN_SPEECH = 0.25
-PAD_PRE = 0.4            # сек контекста перед сегментом (sherpa-onnx#3035)
-PAD_POST = 0.25          # сек хвоста после сегмента
-CAP_PAUSE = 1.5          # пауза, после которой стык считаем новым предложением
+# Параметры нарезки и стыков фраз живут в py/streaming.py (канон): их
+# использует и eval-харнесс, чтобы мерить ровно продовый пайплайн.
+MAX_SPEECH = streaming.MAX_SPEECH
+MIN_SILENCE = streaming.MIN_SILENCE
+MIN_SPEECH = streaming.MIN_SPEECH
+PAD_PRE = streaming.PAD_PRE
+PAD_POST = streaming.PAD_POST
+CAP_PAUSE = streaming.CAP_PAUSE
 VAD_BUFFER_SECONDS = 120
 MAX_RECORD_SECONDS = 600
 
@@ -412,7 +411,8 @@ class Dictation(object):
         """Режем запись на фразы. Общий механизм с потоковым режимом."""
         self.vad.reset()
         seg = streaming.Segmenter(self.vad, self.np, VAD_WINDOW, rate=RATE,
-                                  pad_pre=PAD_PRE, pad_post=PAD_POST)
+                                  pad_pre=PAD_PRE, pad_post=PAD_POST,
+                                  overlap=streaming.OVERLAP)
         segments = seg.feed(pcm)
         segments += seg.flush()
         if not segments and len(pcm):
@@ -442,9 +442,10 @@ class Dictation(object):
                 continue
             if text:
                 prev = texts[-1] if texts else None
-                glue, cap = streaming.phrase_glue(prev, phrase.gap, CAP_PAUSE)
-                texts.append(glue + (streaming.capitalize_first(text) if cap
-                                     else text))
+                chunk = streaming.join_chunk(prev, text, phrase.gap,
+                                             phrase.overlap, CAP_PAUSE)
+                if chunk:
+                    texts.append(chunk)
         return ''.join(texts).strip()
 
     def _session(self):
@@ -453,7 +454,8 @@ class Dictation(object):
             np = self.np
             self.vad.reset()
             seg = streaming.Segmenter(self.vad, np, VAD_WINDOW, rate=RATE,
-                                      pad_pre=PAD_PRE, pad_post=PAD_POST)
+                                      pad_pre=PAD_PRE, pad_post=PAD_POST,
+                                      overlap=streaming.OVERLAP)
             worker = streaming.DecodeWorker(
                 self._decode,
                 on_text=lambda idx, text: emit('partial', idx, text),

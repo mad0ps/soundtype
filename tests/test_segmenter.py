@@ -51,6 +51,27 @@ def _mk(samples, start):
     return seg
 
 
+def test_feed_remembers_per_window_not_in_bulk():
+    # Регрессия: _remember(buf[:n]) раньше звался ОДНИМ блоком на весь buf
+    # ДО цикла по окнам. При большом единичном feed() (так делает eval —
+    # целый файл разом, не по 0.128с как прод) это обрезало кольцевой
+    # буфер до keep_seconds ДО того, как _drain дошёл до раннего
+    # сегмента, — тот получал пустой срез (samples_len=0 → decode падает
+    # на пустом входе, sherpa-onnx "Invalid input shape: {0}").
+    vad = FakeVad()
+    s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.0, pad_post=0.0,
+                  keep_seconds=0.2)                    # keep = 200 отсчётов
+    stream = np.arange(500, dtype=np.float32)
+    vad.pending.append(_mk(stream[0:100], 0))          # сегмент у начала фида
+    got = s.feed(stream)                               # один feed() на 500 = 5 окон
+    # Под старым порядком buf_base уехал бы на 300 ДО первого окна, и срез
+    # получился бы пустым; по новому порядку сегмент дренируется окном
+    # раньше, чем буфер успевает подрезаться.
+    assert len(got) == 1
+    assert len(got[0].samples) == 100
+    assert list(got[0].samples) == list(stream[0:100])
+
+
 def test_padding_and_gap():
     vad = FakeVad()
     s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.1, pad_post=0.05)
@@ -85,3 +106,47 @@ def test_pre_pad_capped_by_previous_segment():
     got = s.feed(stream[500:600])
     # pad_pre=500 хочет с 0, но конец предыдущего сегмента = 200
     assert got[0].samples[0] == 200.0
+
+
+def test_overlap_reaches_into_previous_segment():
+    vad = FakeVad()
+    s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.1, pad_post=0.0,
+                  overlap=0.2, overlap_gap_max=2.0)
+    stream = np.arange(2000, dtype=np.float32)
+    s.feed(stream[:600])
+    vad.pending.append(_mk(stream[200:300], 200))
+    s.feed(stream[600:700])                        # prev_end = 300
+    vad.pending.append(_mk(stream[500:600], 500))
+    got = s.feed(stream[700:800])
+    p = got[0]
+    # lo = min(500-100, 300-200) = 100: захватили хвост предыдущего сегмента
+    assert p.samples[0] == 100.0
+    assert abs(p.overlap - 0.2) < 1e-9
+    assert p.gap == 0.2
+
+
+def test_no_overlap_when_gap_exceeds_max():
+    vad = FakeVad()
+    s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.1, pad_post=0.0,
+                  overlap=0.2, overlap_gap_max=0.1)
+    stream = np.arange(2000, dtype=np.float32)
+    s.feed(stream[:600])
+    vad.pending.append(_mk(stream[200:300], 200))
+    s.feed(stream[600:700])
+    vad.pending.append(_mk(stream[500:600], 500))
+    got = s.feed(stream[700:800])
+    p = got[0]
+    # пауза 0.2с > overlap_gap_max: старое поведение, pre-pad упирается в prev_end
+    assert p.samples[0] == 400.0
+    assert p.overlap == 0.0
+
+
+def test_first_segment_never_overlaps():
+    vad = FakeVad()
+    s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.1, pad_post=0.0,
+                  overlap=0.5)
+    stream = np.arange(1000, dtype=np.float32)
+    s.feed(stream[:500])
+    vad.pending.append(_mk(stream[200:300], 200))
+    got = s.feed(stream[500:600])
+    assert got[0].overlap == 0.0

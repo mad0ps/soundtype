@@ -11,7 +11,42 @@ Segmenter гонит звук через VAD окнами по 512 отсчёт�
 """
 
 import queue
+import re
 import threading
+
+# --- Параметры прод-пайплайна (канон здесь: backend и eval импортируют) ---
+VAD_WINDOW = 512          # silero работает окнами по 512 отсчётов
+# Нарезка и стыки фраз (ресёрч 21.08: faster-whisper 2.0s+pad400, whisperX
+# чанки 30с; полные предложения дают модели +20-25% качества пунктуации,
+# arxiv 2409.05601). Паузы обдумывания 0.4-0.8с не должны рвать предложение.
+MIN_SILENCE = 1.0         # было 0.35 — резало речь на подфразовые обрывки
+MIN_SPEECH = 0.25
+MAX_SPEECH = 30.0
+PAD_PRE = 0.4             # сек контекста перед сегментом (sherpa-onnx#3035)
+PAD_POST = 0.25           # сек хвоста после сегмента
+CAP_PAUSE = 1.5           # пауза, после которой стык считаем новым предложением
+# Overlap+LCS на стыках (issue #14): сегмент захватывает хвост предыдущего,
+# задвоенные слова убирает merge_overlap. Streaming не видит будущего звука,
+# поэтому перекрытие только назад.
+# Выключено по умолчанию (замер 2026-08-25, eval/reports/boundary-overlap-tuning.md):
+# каждая фраза декодируется offline-распознавателем с нуля (create_stream() на
+# фразу), поэтому окно перекрытия декодируется ДВАЖДЫ в разных условиях —
+# как хвост предыдущей длинной фразы и как голый старт новой без разгона.
+# Модель на голом старте нередко даёт другой текст (вплоть до галлюцинаций),
+# merge_overlap не находит LCS-совпадения и мусор просто дописывается.
+# Проверено overlap∈{0.1,0.2,0.5,1.0,1.5}: agg WER хуже par0 на +0.58..+2.12пп,
+# damaged% растёт (до 81% при 1.0/1.5 против 41% на par0). Точечный тест —
+# сузить OVERLAP_GAP_MAX до 0.3 (только форс-каты max_speech/мгновенные
+# VAD-реоткрытия) — WER остался чистым, но единственный попавший в такое окно
+# стык всё равно повредился сильнее (2/2 vs 1/2 в par0): тот же механизм
+# бьёт и на коротких паузах. Инфраструктура (merge_overlap/join_chunk/
+# Segmenter overlap-ветка) остаётся в коде и покрыта тестами — включение
+# требует либо переноса decoder state между фразами, либо отказа от
+# повторного декода перекрытия текстовой склейкой без re-ASR.
+OVERLAP = 0.0             # сек речи предыдущего сегмента в качестве контекста
+OVERLAP_GAP_MAX = 2.0     # при паузе длиннее контекст соседа не берём
+LCS_WINDOW = 8            # окно токенов для поиска дубля на стыке
+LCS_MIN_MATCH = 2         # минимум совпавших токенов, чтобы счесть дублем
 
 _SENTINEL = object()
 
@@ -21,14 +56,17 @@ SENTENCE_END = ('.', '!', '?', '…')
 
 class Phrase(object):
     """Готовая фраза из VAD: samples (с паддингом), длина чистой речи
-    в отсчётах и пауза в секундах перед началом (None = первая/неизвестно)."""
+    в отсчётках, пауза в секундах перед началом (None = первая/неизвестно)
+    и overlap — сколько секунд окна предыдущего сегмента захвачено в начале
+    (0.0 = перекрытия нет)."""
 
-    __slots__ = ('samples', 'speech_len', 'gap')
+    __slots__ = ('samples', 'speech_len', 'gap', 'overlap')
 
-    def __init__(self, samples, speech_len, gap):
+    def __init__(self, samples, speech_len, gap, overlap=0.0):
         self.samples = samples
         self.speech_len = speech_len
         self.gap = gap
+        self.overlap = overlap
 
 
 def phrase_glue(prev_text, gap, cap_pause):
@@ -56,6 +94,60 @@ def capitalize_first(text):
     return text
 
 
+_TOKEN_JUNK = re.compile(r'[^\w]+', re.UNICODE)
+
+
+def _norm_token(tok):
+    return _TOKEN_JUNK.sub('', tok.lower().replace('ё', 'е'))
+
+
+def merge_overlap(prev_text, text, window=LCS_WINDOW, min_match=LCS_MIN_MATCH):
+    """Убирает из начала text слова, задвоенные с хвостом prev_text.
+
+    Сегмент с overlap-аудио начинается с повторного декода хвоста предыдущего;
+    ищем самое длинное непрерывное совпадение нормализованных токенов
+    (регистр/ё/пунктуация не в счёт) между последними `window` токенами prev
+    и первыми `window` токенами text. Совпадение обязано доставать до хвоста
+    prev (допуск 1 токен — последний мог быть обрезан срезом). Возвращает
+    (text без дубля, был ли дубль); выбрасываются исходные токены text.
+    """
+    if not prev_text or not text:
+        return text, False
+    prev_norm = [_norm_token(t) for t in prev_text.split()][-window:]
+    toks = text.split()
+    head_norm = [_norm_token(t) for t in toks[:window]]
+    best_len = best_end = 0
+    for i in range(len(prev_norm)):
+        for j in range(len(head_norm)):
+            k = 0
+            while (i + k < len(prev_norm) and j + k < len(head_norm)
+                   and prev_norm[i + k] and prev_norm[i + k] == head_norm[j + k]):
+                k += 1
+            if k > best_len and i + k >= len(prev_norm) - 1:
+                best_len, best_end = k, j + k
+    if best_len < min_match:
+        return text, False
+    return ' '.join(toks[best_end:]), True
+
+
+def join_chunk(prev_text, text, gap, overlap, cap_pause,
+               window=LCS_WINDOW, min_match=LCS_MIN_MATCH):
+    """Единая точка склейки нового текста фразы с уже набранным.
+
+    При overlap-аудио сначала пробуем LCS-дедуп; удался — стык внутри
+    предложения (пробел, без капитализации). Иначе обычные правила
+    phrase_glue. Возвращает строку для append ('' — добавлять нечего).
+    """
+    if not text:
+        return ''
+    if overlap and prev_text:
+        merged, matched = merge_overlap(prev_text, text, window, min_match)
+        if matched:
+            return (' ' + merged) if merged else ''
+    glue, cap = phrase_glue(prev_text, gap, cap_pause)
+    return glue + (capitalize_first(text) if cap else text)
+
+
 class Segmenter(object):
     """Кормит VAD окнами по `window` отсчётков, отдаёт готовые сегменты.
 
@@ -64,7 +156,7 @@ class Segmenter(object):
     """
 
     def __init__(self, vad, np, window=512, rate=0, pad_pre=0.0, pad_post=0.0,
-                 keep_seconds=40.0):
+                 keep_seconds=40.0, overlap=0.0, overlap_gap_max=OVERLAP_GAP_MAX):
         self.vad = vad
         self.np = np
         self.window = window
@@ -75,11 +167,14 @@ class Segmenter(object):
         self._pad_pre = int(rate * pad_pre)
         self._pad_post = int(rate * pad_post)
         self._keep = int(rate * keep_seconds) if rate else 0
+        self._overlap = int(rate * overlap)
+        self._overlap_gap_max = overlap_gap_max
         self._tail = np.zeros(0, dtype=np.float32)
         self._buf = np.zeros(0, dtype=np.float32)
         self._buf_base = 0     # абсолютный индекс первого отсчёта в _buf
         self._fed = 0          # сколько отсчётов скормлено VAD всего
         self._prev_end = None  # абсолютный конец предыдущего сегмента
+        self._prev_hi = 0      # конец окна предыдущей фразы с pad_post
 
     def _remember(self, chunk):
         if not self._keep:
@@ -103,12 +198,24 @@ class Segmenter(object):
             end = start + len(raw)
             gap = (None if self._prev_end is None
                    else (start - self._prev_end) / float(self.rate))
-            lo = max(start - self._pad_pre, self._buf_base,
-                     self._prev_end if self._prev_end is not None else 0)
+            # Стык близкий: даём сегменту хвост предыдущего ОКНА как левый контекст
+            prev_hi = self._prev_hi if self._prev_end is not None else 0
+            if (self._overlap and self._prev_end is not None
+                    and gap is not None and gap <= self._overlap_gap_max):
+                # Стык близкий: даём сегменту хвост предыдущего ОКНА как
+                # левый контекст; задвоенные слова уберёт merge_overlap.
+                lo = max(min(start - self._pad_pre, prev_hi - self._overlap),
+                         self._buf_base)
+                overlap = max(0, prev_hi - lo) / float(self.rate)
+            else:
+                lo = max(start - self._pad_pre, self._buf_base,
+                         self._prev_end if self._prev_end is not None else 0)
+                overlap = 0.0
             hi = min(end + self._pad_post, self._fed)
             self._prev_end = end
+            self._prev_hi = hi
             out.append(Phrase(self._buf[lo - self._buf_base:hi - self._buf_base],
-                              len(raw), gap))
+                              len(raw), gap, overlap))
 
     def feed(self, samples):
         np = self.np
@@ -116,10 +223,16 @@ class Segmenter(object):
         n = (len(buf) // self.window) * self.window
         self._tail = buf[n:]
         out = []
-        if n:
-            self._remember(buf[:n])
+        # _remember ПЕРЕД accept_waveform для КАЖДОГО окна, а не одним блоком
+        # на весь buf[:n]: иначе при большом feed() (весь файл разом — так
+        # делает eval, не только по 0.128с как прод) _buf успевает подрезаться
+        # до keep_seconds раньше, чем _drain дойдёт до ранних сегментов, и им
+        # достаётся уже пустой срез (samples_len=0 → decode падает на пустом
+        # входе). По 0.128с-чанкам прод-потока порядок эквивалентен старому.
         for i in range(0, n, self.window):
-            self.vad.accept_waveform(buf[i:i + self.window])
+            chunk = buf[i:i + self.window]
+            self._remember(chunk)
+            self.vad.accept_waveform(chunk)
             self._fed += self.window
             self._drain(out)
         return out
@@ -186,7 +299,9 @@ class DecodeWorker(object):
                 continue
             if text:
                 prev = self.texts[-1] if self.texts else None
-                glue, cap = phrase_glue(prev, gap, self.cap_pause)
-                chunk = glue + (capitalize_first(text) if cap else text)
-                self.texts.append(chunk)
-                self.on_text(idx, chunk)
+                chunk = join_chunk(prev, text, gap,
+                                   getattr(seg, 'overlap', 0.0),
+                                   self.cap_pause)
+                if chunk:
+                    self.texts.append(chunk)
+                    self.on_text(idx, chunk)

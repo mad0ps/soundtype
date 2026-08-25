@@ -186,3 +186,65 @@ interruption midway leaves a partially complete file/directory that
 We previously discussed dropping VAD for better quality at segment boundaries.
 Cancelled: VAD IS the streaming segmentation mechanism. We cut at pauses;
 words are not torn apart.
+
+## Backward-only overlap + token-LCS dedupe at VAD junctions (issue #14) — shipped disabled
+
+VAD-cut segments still lose or garble the word right at the cut (edge-word
+degradation from missing acoustic context) even with the existing
+`PAD_PRE`/`PAD_POST` ring-buffer padding, which only pads with raw audio and
+doesn't give the model a running decode to continue from. The plan: have
+each phrase's slice re-include the last `OVERLAP` seconds of the *previous*
+phrase's audio, decode it as usual, then use a token-level LCS
+(`merge_overlap`) to strip whatever got re-transcribed, keeping only the new
+words. Overlap direction is backward-only by construction — streaming
+cannot wait for audio that hasn't been recorded yet — unlike NVIDIA's
+symmetric (left+right) chunking used in offline batch transcription, which
+was rejected outright for this reason (not applicable to a live stream).
+The alternative of simply widening the static pads without any dedupe was
+also rejected: bigger pads just re-decode more of the neighboring phrase's
+audio as duplicate text with nothing to remove it.
+
+**Measured effect (2026-08-25 tuning pass,
+`eval/reports/boundary-overlap-tuning.md`, local — not committed, contains
+corpus transcripts):** the parity baseline (today's prod pipeline, pads on,
+`overlap=0`) measures 58 junctions, 24 damaged (41%), aggregate WER 18.08%
+on the 42-clip eval corpus. Turning overlap on **made both metrics worse at
+every tested width** (0.1, 0.2, 0.5, 1.0 — the plan's default, 1.5
+seconds): damaged% ranged 36–81% (worse than parity except at the very
+smallest widths, which still failed the WER guard), aggregate WER regressed
++0.58 to +2.12 percentage points (guard was ≤+0.5pp). A follow-up targeted
+experiment narrowed `OVERLAP_GAP_MAX` from 2.0s to 0.3s so overlap only
+fires on `max_speech`-forced cuts and instant VAD re-opens (where the
+"next" phrase is provably a continuation of the same utterance, not a
+different mid-sentence fragment) — WER came back clean (18.04%,
+-0.04pp), but the one junction in the whole corpus that qualified for this
+gate still came out *more* damaged than parity (2/2 vs 1/2 junctions
+damaged), the same failure mode reproducing even on a genuine forced-cut
+continuation.
+
+**Root cause:** both the live and eval decode paths call
+`recognizer.create_stream()` **per phrase** (no decoder state carried
+across phrases). The re-included overlap window therefore gets transcribed
+twice under different acoustic conditions — once with full left context as
+the tail of the previous, longer utterance, once cold as the entire leading
+content of a fresh stream — and a transducer model frequently produces
+different wording for the second case, up to outright hallucination
+(observed: a two-word Russian phrase hallucinated wholesale at a junction,
+absent from any reference). When the two transcriptions share no common
+token, `merge_overlap`'s LCS has nothing to match, and `join_chunk` appends
+the divergent text raw instead of deduping it. No case of the *opposite*
+failure (over-aggressive LCS matching deleting genuine repeated words) was
+observed in any run, so `LCS_MIN_MATCH` is not a useful lever here — the
+problem is decode divergence, not a matching threshold.
+
+**Decision:** ship the infrastructure (`merge_overlap`, `join_chunk`'s
+overlap branch, `Segmenter`'s overlap plumbing, the `eval` harness that
+proved all of this) but set `OVERLAP = 0.0` by default — the mechanism is
+present and unit-tested, reachable via `--overlap` in `eval.run_model` or by
+setting `OVERLAP` in `py/streaming.py` for further experimentation, but off
+in prod until it can carry decoder state across adjacent phrases (or be
+redesigned as a textual stitch that never re-transcribes already-decoded
+audio). `PAD_PRE`/`PAD_POST` (unrelated, already in prod) are untouched.
+Edge-word degradation at ordinary VAD pauses remains open — issue #14
+should stay open past this task pending a redesign, rather than being
+closed on infrastructure that measured net-negative.

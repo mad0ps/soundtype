@@ -41,3 +41,17 @@ def test_empty_text_ignored():
     w.put([0.0])
     assert w.close(timeout=5) == ''
     assert calls == []
+
+
+def test_worker_dedupes_overlapped_segments():
+    import types
+    texts = iter(['мы пошли в магазин', 'в магазин и купили хлеб'])
+    got = []
+    w = DecodeWorker(lambda s: next(texts), on_text=lambda i, t: got.append(t),
+                     min_samples=0, cap_pause=1.5)
+    w.put(types.SimpleNamespace(samples=[0.0] * 10, speech_len=10, gap=None,
+                                overlap=0.0))
+    w.put(types.SimpleNamespace(samples=[0.0] * 10, speech_len=10, gap=0.2,
+                                overlap=1.0))
+    full = w.close(timeout=5)
+    assert full == 'Мы пошли в магазин и купили хлеб'
