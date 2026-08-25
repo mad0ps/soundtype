@@ -115,6 +115,24 @@ def merge_overlap(prev_text, text, window=LCS_WINDOW, min_match=LCS_MIN_MATCH):
     return ' '.join(toks[best_end:]), True
 
 
+def join_chunk(prev_text, text, gap, overlap, cap_pause,
+               window=LCS_WINDOW, min_match=LCS_MIN_MATCH):
+    """Единая точка склейки нового текста фразы с уже набранным.
+
+    При overlap-аудио сначала пробуем LCS-дедуп; удался — стык внутри
+    предложения (пробел, без капитализации). Иначе обычные правила
+    phrase_glue. Возвращает строку для append ('' — добавлять нечего).
+    """
+    if not text:
+        return ''
+    if overlap and prev_text:
+        merged, matched = merge_overlap(prev_text, text, window, min_match)
+        if matched:
+            return (' ' + merged) if merged else ''
+    glue, cap = phrase_glue(prev_text, gap, cap_pause)
+    return glue + (capitalize_first(text) if cap else text)
+
+
 class Segmenter(object):
     """Кормит VAD окнами по `window` отсчётков, отдаёт готовые сегменты.
 
@@ -260,7 +278,9 @@ class DecodeWorker(object):
                 continue
             if text:
                 prev = self.texts[-1] if self.texts else None
-                glue, cap = phrase_glue(prev, gap, self.cap_pause)
-                chunk = glue + (capitalize_first(text) if cap else text)
-                self.texts.append(chunk)
-                self.on_text(idx, chunk)
+                chunk = join_chunk(prev, text, gap,
+                                   getattr(seg, 'overlap', 0.0),
+                                   self.cap_pause)
+                if chunk:
+                    self.texts.append(chunk)
+                    self.on_text(idx, chunk)

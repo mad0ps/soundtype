@@ -411,7 +411,8 @@ class Dictation(object):
         """Режем запись на фразы. Общий механизм с потоковым режимом."""
         self.vad.reset()
         seg = streaming.Segmenter(self.vad, self.np, VAD_WINDOW, rate=RATE,
-                                  pad_pre=PAD_PRE, pad_post=PAD_POST)
+                                  pad_pre=PAD_PRE, pad_post=PAD_POST,
+                                  overlap=streaming.OVERLAP)
         segments = seg.feed(pcm)
         segments += seg.flush()
         if not segments and len(pcm):
@@ -441,9 +442,10 @@ class Dictation(object):
                 continue
             if text:
                 prev = texts[-1] if texts else None
-                glue, cap = streaming.phrase_glue(prev, phrase.gap, CAP_PAUSE)
-                texts.append(glue + (streaming.capitalize_first(text) if cap
-                                     else text))
+                chunk = streaming.join_chunk(prev, text, phrase.gap,
+                                             phrase.overlap, CAP_PAUSE)
+                if chunk:
+                    texts.append(chunk)
         return ''.join(texts).strip()
 
     def _session(self):
@@ -452,7 +454,8 @@ class Dictation(object):
             np = self.np
             self.vad.reset()
             seg = streaming.Segmenter(self.vad, np, VAD_WINDOW, rate=RATE,
-                                      pad_pre=PAD_PRE, pad_post=PAD_POST)
+                                      pad_pre=PAD_PRE, pad_post=PAD_POST,
+                                      overlap=streaming.OVERLAP)
             worker = streaming.DecodeWorker(
                 self._decode,
                 on_text=lambda idx, text: emit('partial', idx, text),
