@@ -109,6 +109,7 @@ def decode_corpus_vad(decode_fn, corpus_dir, out_path, model_label,
     """Как decode_corpus, но через прод-цепочку + пишет <name>-segments.jsonl."""
     entries = load_manifest(str(corpus_dir))
     seg_path = str(out_path)[:-len('.jsonl')] + '-segments.jsonl'
+    os.makedirs(os.path.dirname(str(out_path)) or '.', exist_ok=True)
     n = 0
     with open(out_path, 'w', encoding='utf-8') as f, \
          open(seg_path, 'w', encoding='utf-8') as fs:
