@@ -2,19 +2,24 @@
 
 Modes:
   whole — one decode per file (isolates model quality),
-  vad   — prod-like silero-VAD segmentation (min_silence 1.0s), segments
-          decoded independently and space-joined (approximation of the
-          app pipeline; #14 will reuse this mode for boundary tuning).
+  vad   — runs the real prod pipeline (py/streaming.py: Segmenter with
+          pre/post pads, overlap+LCS dedup at junctions, max_speech forced
+          cuts, join_chunk stitching) so the eval harness measures what the
+          app actually produces (#14). Old raw-VAD runs from 2026-08-22
+          (plain VAD + space-join, no pads/overlap) are NOT comparable to
+          runs made after this change.
 """
-import argparse, glob, json, os, wave
+import argparse, glob, json, os, sys, wave
 
 import numpy as np
 
 from eval.collect import load_manifest, DEFAULT_CORPUS
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'py'))
+import streaming  # noqa: E402  (канон параметров пайплайна — py/streaming.py)
+
 RUNS_DIR = os.path.join(os.path.dirname(__file__), 'runs')
 VAD_MODEL = os.path.join(os.path.dirname(__file__), 'models', 'silero_vad.onnx')
-MIN_SILENCE = 1.0  # mirrors py/backend.py prod segmentation
 
 
 def read_wav(path):
@@ -66,29 +71,59 @@ def whole_decode_fn(recognizer):
     return fn
 
 
-def vad_decode_fn(recognizer):
+def build_vad(max_speech=streaming.MAX_SPEECH):
+    """VAD с ПРОДОВЫМ конфигом (backend.load), включая max_speech форс-нарезку."""
     import sherpa_onnx
-    base = whole_decode_fn(recognizer)
+    cfg = sherpa_onnx.VadModelConfig()
+    cfg.silero_vad.model = VAD_MODEL
+    cfg.silero_vad.threshold = 0.5
+    cfg.silero_vad.min_silence_duration = streaming.MIN_SILENCE
+    cfg.silero_vad.min_speech_duration = streaming.MIN_SPEECH
+    cfg.silero_vad.max_speech_duration = max_speech
+    cfg.sample_rate = 16000
+    return sherpa_onnx.VoiceActivityDetector(cfg, buffer_size_in_seconds=300)
 
-    def fn(samples):
-        cfg = sherpa_onnx.VadModelConfig()
-        cfg.silero_vad.model = VAD_MODEL
-        cfg.silero_vad.min_silence_duration = MIN_SILENCE
-        cfg.sample_rate = 16000
-        # prod (py/backend.py) uses VAD_BUFFER_SECONDS=120; eval uses 300s so a
-        # single whole-clip decode fits without wrapping — >300s of speech in one
-        # clip would wrap the ring buffer and lose audio.
-        vad = sherpa_onnx.VoiceActivityDetector(cfg, buffer_size_in_seconds=300)
-        window = cfg.silero_vad.window_size
-        parts = []
-        for off in range(0, len(samples), window):
-            vad.accept_waveform(samples[off:off + window])
-        vad.flush()
-        while not vad.empty():
-            parts.append(base(np.asarray(vad.front.samples, dtype=np.float32)))
-            vad.pop()
-        return ' '.join(p for p in parts if p)
-    return fn
+
+def vad_pipeline(samples, vad, decode_fn, np_mod, overlap):
+    """Прод-цепочка: Segmenter (pad+overlap) → decode → join_chunk."""
+    seg = streaming.Segmenter(vad, np_mod, streaming.VAD_WINDOW, rate=16000,
+                              pad_pre=streaming.PAD_PRE,
+                              pad_post=streaming.PAD_POST, overlap=overlap)
+    phrases = seg.feed(samples) + seg.flush()
+    texts, metas = [], []
+    for ph in phrases:
+        if ph.speech_len < 16000 * 0.2:
+            continue
+        text = decode_fn(np_mod.asarray(ph.samples, dtype=np_mod.float32))
+        metas.append({'text': text, 'gap': ph.gap, 'overlap': ph.overlap,
+                      'dur': len(ph.samples) / 16000.0})
+        chunk = streaming.join_chunk(texts[-1] if texts else None, text,
+                                     ph.gap, ph.overlap, streaming.CAP_PAUSE)
+        if chunk:
+            texts.append(chunk)
+    return ''.join(texts).strip(), metas
+
+
+def decode_corpus_vad(decode_fn, corpus_dir, out_path, model_label,
+                      overlap, max_speech):
+    """Как decode_corpus, но через прод-цепочку + пишет <name>-segments.jsonl."""
+    entries = load_manifest(str(corpus_dir))
+    seg_path = str(out_path)[:-len('.jsonl')] + '-segments.jsonl'
+    n = 0
+    with open(out_path, 'w', encoding='utf-8') as f, \
+         open(seg_path, 'w', encoding='utf-8') as fs:
+        for e in entries:
+            samples = read_wav(os.path.join(str(corpus_dir), e['wav']))
+            text, metas = vad_pipeline(samples, build_vad(max_speech),
+                                       decode_fn, np, overlap)
+            f.write(json.dumps({'id': e['id'], 'hyp': text,
+                                'model': model_label, 'mode': 'vad'},
+                               ensure_ascii=False) + '\n')
+            fs.write(json.dumps({'id': e['id'], 'segments': metas},
+                                ensure_ascii=False) + '\n')
+            n += 1
+            print('[%d/%d] %s' % (n, len(entries), e['id']), flush=True)
+    return n
 
 
 def main():
@@ -97,12 +132,20 @@ def main():
     ap.add_argument('--name', required=True, help='run name → runs/<name>.jsonl')
     ap.add_argument('--mode', choices=['whole', 'vad'], default='whole')
     ap.add_argument('--corpus-dir', default=DEFAULT_CORPUS)
+    ap.add_argument('--overlap', type=float, default=streaming.OVERLAP,
+                    help='сек контекста с прошлого сегмента, 0 = выкл (default: streaming.OVERLAP)')
+    ap.add_argument('--max-speech', type=float, default=streaming.MAX_SPEECH,
+                    help='форс-нарезка длинной речи, сек (default: streaming.MAX_SPEECH)')
     args = ap.parse_args()
     rec = build_recognizer(args.model_dir)
-    fn = whole_decode_fn(rec) if args.mode == 'whole' else vad_decode_fn(rec)
     out = os.path.join(RUNS_DIR, args.name + '.jsonl')
-    n = decode_corpus(fn, args.corpus_dir, out, args.mode,
-                      os.path.basename(os.path.normpath(args.model_dir)))
+    model_label = os.path.basename(os.path.normpath(args.model_dir))
+    if args.mode == 'whole':
+        n = decode_corpus(whole_decode_fn(rec), args.corpus_dir, out, args.mode,
+                          model_label)
+    else:
+        n = decode_corpus_vad(whole_decode_fn(rec), args.corpus_dir, out,
+                              model_label, args.overlap, args.max_speech)
     print('wrote %s (%d clips)' % (out, n))
 
 

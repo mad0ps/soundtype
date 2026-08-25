@@ -42,3 +42,31 @@ def test_decode_corpus_writes_run_file(tmp_path):
     lines = [json.loads(l) for l in open(out, encoding='utf-8')]
     assert lines[0] == {'id': 'clip0', 'hyp': 'решённый текст',
                         'model': 'fake', 'mode': 'whole'}
+
+def test_vad_pipeline_joins_via_prod_chain():
+    import types
+    from eval.run_model import vad_pipeline
+    from fakes import FakeVad
+
+    vad = FakeVad()
+    # speech_len должен пройти прод-порог 0.2с (3200 отсчётков при 16кГц)
+    seg = types.SimpleNamespace(samples=[0.5] * 4000, start=100)
+    vad.pending.append(seg)
+    texts = iter(['привет мир'])
+    text, metas = vad_pipeline(np.arange(1600, dtype=np.float32), vad,
+                               lambda s: next(texts), np, overlap=1.0)
+    assert text == 'Привет мир'          # прод-склейка: капитализация первой
+    assert len(metas) == 1
+    assert set(metas[0]) == {'text', 'gap', 'overlap', 'dur'}
+
+def test_vad_mode_writes_segments_file(tmp_path, monkeypatch):
+    import eval.run_model as rm
+    corpus = _mk_corpus(tmp_path, n=1)
+    out = tmp_path / 'run.jsonl'
+    monkeypatch.setattr(rm, 'build_vad', lambda max_speech: __import__('fakes').FakeVad())
+    n = rm.decode_corpus_vad(lambda s: 'текст', corpus, out,
+                             model_label='fake', overlap=1.0, max_speech=30.0)
+    assert n == 1
+    segs = [json.loads(l) for l in open(tmp_path / 'run-segments.jsonl',
+                                        encoding='utf-8')]
+    assert segs[0]['id'] == 'clip0' and 'segments' in segs[0]
