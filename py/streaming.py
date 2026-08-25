@@ -11,7 +11,27 @@ Segmenter гонит звук через VAD окнами по 512 отсчёт�
 """
 
 import queue
+import re
 import threading
+
+# --- Параметры прод-пайплайна (канон здесь: backend и eval импортируют) ---
+VAD_WINDOW = 512          # silero работает окнами по 512 отсчётов
+# Нарезка и стыки фраз (ресёрч 21.08: faster-whisper 2.0s+pad400, whisperX
+# чанки 30с; полные предложения дают модели +20-25% качества пунктуации,
+# arxiv 2409.05601). Паузы обдумывания 0.4-0.8с не должны рвать предложение.
+MIN_SILENCE = 1.0         # было 0.35 — резало речь на подфразовые обрывки
+MIN_SPEECH = 0.25
+MAX_SPEECH = 30.0
+PAD_PRE = 0.4             # сек контекста перед сегментом (sherpa-onnx#3035)
+PAD_POST = 0.25           # сек хвоста после сегмента
+CAP_PAUSE = 1.5           # пауза, после которой стык считаем новым предложением
+# Overlap+LCS на стыках (issue #14): сегмент захватывает хвост предыдущего,
+# задвоенные слова убирает merge_overlap. Streaming не видит будущего звука,
+# поэтому перекрытие только назад.
+OVERLAP = 1.0             # сек речи предыдущего сегмента в качестве контекста
+OVERLAP_GAP_MAX = 2.0     # при паузе длиннее контекст соседа не берём
+LCS_WINDOW = 8            # окно токенов для поиска дубля на стыке
+LCS_MIN_MATCH = 2         # минимум совпавших токенов, чтобы счесть дублем
 
 _SENTINEL = object()
 
@@ -54,6 +74,42 @@ def capitalize_first(text):
         if ch.isalpha():
             return text[:i] + ch.upper() + text[i + 1:]
     return text
+
+
+_TOKEN_JUNK = re.compile(r'[^\w]+', re.UNICODE)
+
+
+def _norm_token(tok):
+    return _TOKEN_JUNK.sub('', tok.lower().replace('ё', 'е'))
+
+
+def merge_overlap(prev_text, text, window=LCS_WINDOW, min_match=LCS_MIN_MATCH):
+    """Убирает из начала text слова, задвоенные с хвостом prev_text.
+
+    Сегмент с overlap-аудио начинается с повторного декода хвоста предыдущего;
+    ищем самое длинное непрерывное совпадение нормализованных токенов
+    (регистр/ё/пунктуация не в счёт) между последними `window` токенами prev
+    и первыми `window` токенами text. Совпадение обязано доставать до хвоста
+    prev (допуск 1 токен — последний мог быть обрезан срезом). Возвращает
+    (text без дубля, был ли дубль); выбрасываются исходные токены text.
+    """
+    if not prev_text or not text:
+        return text, False
+    prev_norm = [_norm_token(t) for t in prev_text.split()][-window:]
+    toks = text.split()
+    head_norm = [_norm_token(t) for t in toks[:window]]
+    best_len = best_end = 0
+    for i in range(len(prev_norm)):
+        for j in range(len(head_norm)):
+            k = 0
+            while (i + k < len(prev_norm) and j + k < len(head_norm)
+                   and prev_norm[i + k] and prev_norm[i + k] == head_norm[j + k]):
+                k += 1
+            if k > best_len and i + k >= len(prev_norm) - 1:
+                best_len, best_end = k, j + k
+    if best_len < min_match:
+        return text, False
+    return ' '.join(toks[best_end:]), True
 
 
 class Segmenter(object):
