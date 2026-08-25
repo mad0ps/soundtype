@@ -109,6 +109,33 @@ it whole in one pass is cheaper than setting up a stream.
                         ". "; otherwise a plain space
 ```
 
+Backward overlap + token-LCS dedupe at junctions (issue #14): `Segmenter`
+can optionally re-include the last `OVERLAP` seconds of audio from the
+*previous* phrase at the start of the next phrase's slice (only when the
+gap between them is ≤ `OVERLAP_GAP_MAX`), so the next phrase's decode has
+left acoustic context instead of starting cold at a hard VAD cut.
+`merge_overlap` then looks for a run of ≥ `LCS_MIN_MATCH` matching
+normalized tokens between the end of the already-accepted text and the
+start of the new phrase's text, and strips the duplicate; `join_chunk` is
+the single call site both the live and batch paths use. Overlap only looks
+backward — a live stream cannot wait for audio that hasn't arrived yet, so
+unlike offline chunking schemes (e.g. NVIDIA's symmetric left+right
+overlap) this only ever reaches into the past.
+
+As of the 2026-08-25 tuning pass (`eval/reports/boundary-overlap-tuning.md`,
+local) **`OVERLAP` defaults to `0.0` — the mechanism is disabled**. Each
+phrase is decoded from a cold offline-recognizer stream (no state carried
+between phrases), so the re-included overlap window gets transcribed twice
+under different conditions and can come out worded differently each time;
+when the two transcriptions share no common tokens `merge_overlap` can't
+dedupe them and the divergent text is appended raw, which measured *worse*
+junction damage and WER than leaving it off across every width (0.1–1.5s)
+and gate (`OVERLAP_GAP_MAX`) tested. The code, and its unit tests, stay in
+place — `--overlap` in `eval.run_model` and manually setting `OVERLAP` in
+`py/streaming.py` remain the way to experiment with it — but it needs
+decoder-state continuity across phrases (or a non-re-decoding textual
+stitch) before it can ship on by default.
+
 If the detector finds no boundaries at all, the whole recording goes to the
 model in one piece — better that than silently returning nothing.
 

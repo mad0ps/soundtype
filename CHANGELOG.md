@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+* Overlap+LCS merge infrastructure at VAD segment boundaries (issue #14):
+  `Segmenter` can re-include backward audio context from the previous
+  phrase at a junction, and `merge_overlap`/`join_chunk` dedupe the
+  re-transcribed overlap via token-LCS. Measured on the 42-clip eval corpus:
+  shipped **disabled by default** (`OVERLAP = 0.0`) — every tested width
+  (0.1–1.5s) and gate made junction damage and/or aggregate WER worse than
+  today's padding-only baseline (root cause: each phrase decodes from a
+  cold stream, so the re-included window can be transcribed differently
+  the second time and the mismatch gets appended raw instead of deduped).
+  See `docs/DECISIONS.md` for the full measurement and rationale; the eval
+  harness's `vad` mode now mirrors the prod pipeline (pads, `max_speech`,
+  `join_chunk`) and a new `eval.boundary` CLI measures junction damage.
+  Also fixes a `Segmenter.feed()` bug (buffer trimmed before early segments
+  were drained on large single-call feeds) that only eval's whole-clip
+  feeding pattern could trigger.
+
 ## 0.9.0 — selectable model profiles
 
 * **Model picker in app settings**: "Multilingual (Parakeet v3)" (default) or
