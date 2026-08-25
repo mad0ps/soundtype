@@ -209,7 +209,7 @@ audio as duplicate text with nothing to remove it.
 corpus transcripts):** the parity baseline (today's prod pipeline, pads on,
 `overlap=0`) measures 58 junctions, 24 damaged (41%), aggregate WER 18.08%
 on the 42-clip eval corpus. Turning overlap on **made both metrics worse at
-every tested width** (0.1, 0.2, 0.5, 1.0 — the shipped default, 1.5
+every tested width** (0.1, 0.2, 0.5, 1.0 — the plan's default, 1.5
 seconds): damaged% ranged 36–81% (worse than parity except at the very
 smallest widths, which still failed the WER guard), aggregate WER regressed
 +0.58 to +2.12 percentage points (guard was ≤+0.5pp). A follow-up targeted
