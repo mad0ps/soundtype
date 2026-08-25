@@ -41,14 +41,17 @@ SENTENCE_END = ('.', '!', '?', '…')
 
 class Phrase(object):
     """Готовая фраза из VAD: samples (с паддингом), длина чистой речи
-    в отсчётах и пауза в секундах перед началом (None = первая/неизвестно)."""
+    в отсчётках, пауза в секундах перед началом (None = первая/неизвестно)
+    и overlap — сколько секунд окна предыдущего сегмента захвачено в начале
+    (0.0 = перекрытия нет)."""
 
-    __slots__ = ('samples', 'speech_len', 'gap')
+    __slots__ = ('samples', 'speech_len', 'gap', 'overlap')
 
-    def __init__(self, samples, speech_len, gap):
+    def __init__(self, samples, speech_len, gap, overlap=0.0):
         self.samples = samples
         self.speech_len = speech_len
         self.gap = gap
+        self.overlap = overlap
 
 
 def phrase_glue(prev_text, gap, cap_pause):
@@ -120,7 +123,7 @@ class Segmenter(object):
     """
 
     def __init__(self, vad, np, window=512, rate=0, pad_pre=0.0, pad_post=0.0,
-                 keep_seconds=40.0):
+                 keep_seconds=40.0, overlap=0.0, overlap_gap_max=OVERLAP_GAP_MAX):
         self.vad = vad
         self.np = np
         self.window = window
@@ -131,11 +134,14 @@ class Segmenter(object):
         self._pad_pre = int(rate * pad_pre)
         self._pad_post = int(rate * pad_post)
         self._keep = int(rate * keep_seconds) if rate else 0
+        self._overlap = int(rate * overlap)
+        self._overlap_gap_max = overlap_gap_max
         self._tail = np.zeros(0, dtype=np.float32)
         self._buf = np.zeros(0, dtype=np.float32)
         self._buf_base = 0     # абсолютный индекс первого отсчёта в _buf
         self._fed = 0          # сколько отсчётов скормлено VAD всего
         self._prev_end = None  # абсолютный конец предыдущего сегмента
+        self._prev_hi = 0      # конец окна предыдущей фразы с pad_post
 
     def _remember(self, chunk):
         if not self._keep:
@@ -159,12 +165,24 @@ class Segmenter(object):
             end = start + len(raw)
             gap = (None if self._prev_end is None
                    else (start - self._prev_end) / float(self.rate))
-            lo = max(start - self._pad_pre, self._buf_base,
-                     self._prev_end if self._prev_end is not None else 0)
+            # Стык близкий: даём сегменту хвост предыдущего ОКНА как левый контекст
+            prev_hi = self._prev_hi if self._prev_end is not None else 0
+            if (self._overlap and self._prev_end is not None
+                    and gap is not None and gap <= self._overlap_gap_max):
+                # Стык близкий: даём сегменту хвост предыдущего ОКНА как
+                # левый контекст; задвоенные слова уберёт merge_overlap.
+                lo = max(min(start - self._pad_pre, prev_hi - self._overlap),
+                         self._buf_base)
+                overlap = max(0, prev_hi - lo) / float(self.rate)
+            else:
+                lo = max(start - self._pad_pre, self._buf_base,
+                         self._prev_end if self._prev_end is not None else 0)
+                overlap = 0.0
             hi = min(end + self._pad_post, self._fed)
             self._prev_end = end
+            self._prev_hi = hi
             out.append(Phrase(self._buf[lo - self._buf_base:hi - self._buf_base],
-                              len(raw), gap))
+                              len(raw), gap, overlap))
 
     def feed(self, samples):
         np = self.np

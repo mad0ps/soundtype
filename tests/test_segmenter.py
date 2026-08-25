@@ -85,3 +85,47 @@ def test_pre_pad_capped_by_previous_segment():
     got = s.feed(stream[500:600])
     # pad_pre=500 хочет с 0, но конец предыдущего сегмента = 200
     assert got[0].samples[0] == 200.0
+
+
+def test_overlap_reaches_into_previous_segment():
+    vad = FakeVad()
+    s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.1, pad_post=0.0,
+                  overlap=0.2, overlap_gap_max=2.0)
+    stream = np.arange(2000, dtype=np.float32)
+    s.feed(stream[:600])
+    vad.pending.append(_mk(stream[200:300], 200))
+    s.feed(stream[600:700])                        # prev_end = 300
+    vad.pending.append(_mk(stream[500:600], 500))
+    got = s.feed(stream[700:800])
+    p = got[0]
+    # lo = min(500-100, 300-200) = 100: захватили хвост предыдущего сегмента
+    assert p.samples[0] == 100.0
+    assert abs(p.overlap - 0.2) < 1e-9
+    assert p.gap == 0.2
+
+
+def test_no_overlap_when_gap_exceeds_max():
+    vad = FakeVad()
+    s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.1, pad_post=0.0,
+                  overlap=0.2, overlap_gap_max=0.1)
+    stream = np.arange(2000, dtype=np.float32)
+    s.feed(stream[:600])
+    vad.pending.append(_mk(stream[200:300], 200))
+    s.feed(stream[600:700])
+    vad.pending.append(_mk(stream[500:600], 500))
+    got = s.feed(stream[700:800])
+    p = got[0]
+    # пауза 0.2с > overlap_gap_max: старое поведение, pre-pad упирается в prev_end
+    assert p.samples[0] == 400.0
+    assert p.overlap == 0.0
+
+
+def test_first_segment_never_overlaps():
+    vad = FakeVad()
+    s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.1, pad_post=0.0,
+                  overlap=0.5)
+    stream = np.arange(1000, dtype=np.float32)
+    s.feed(stream[:500])
+    vad.pending.append(_mk(stream[200:300], 200))
+    got = s.feed(stream[500:600])
+    assert got[0].overlap == 0.0
