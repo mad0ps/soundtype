@@ -229,8 +229,8 @@ twice under different acoustic conditions — once with full left context as
 the tail of the previous, longer utterance, once cold as the entire leading
 content of a fresh stream — and a transducer model frequently produces
 different wording for the second case, up to outright hallucination
-(observed: `insert whole='' vad='мне важно'`, two words present in no
-version of the reference). When the two transcriptions share no common
+(observed: a two-word Russian phrase hallucinated wholesale at a junction,
+absent from any reference). When the two transcriptions share no common
 token, `merge_overlap`'s LCS has nothing to match, and `join_chunk` appends
 the divergent text raw instead of deduping it. No case of the *opposite*
 failure (over-aggressive LCS matching deleting genuine repeated words) was

@@ -51,6 +51,27 @@ def _mk(samples, start):
     return seg
 
 
+def test_feed_remembers_per_window_not_in_bulk():
+    # Регрессия: _remember(buf[:n]) раньше звался ОДНИМ блоком на весь buf
+    # ДО цикла по окнам. При большом единичном feed() (так делает eval —
+    # целый файл разом, не по 0.128с как прод) это обрезало кольцевой
+    # буфер до keep_seconds ДО того, как _drain дошёл до раннего
+    # сегмента, — тот получал пустой срез (samples_len=0 → decode падает
+    # на пустом входе, sherpa-onnx "Invalid input shape: {0}").
+    vad = FakeVad()
+    s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.0, pad_post=0.0,
+                  keep_seconds=0.2)                    # keep = 200 отсчётов
+    stream = np.arange(500, dtype=np.float32)
+    vad.pending.append(_mk(stream[0:100], 0))          # сегмент у начала фида
+    got = s.feed(stream)                               # один feed() на 500 = 5 окон
+    # Под старым порядком buf_base уехал бы на 300 ДО первого окна, и срез
+    # получился бы пустым; по новому порядку сегмент дренируется окном
+    # раньше, чем буфер успевает подрезаться.
+    assert len(got) == 1
+    assert len(got[0].samples) == 100
+    assert list(got[0].samples) == list(stream[0:100])
+
+
 def test_padding_and_gap():
     vad = FakeVad()
     s = Segmenter(vad, np, window=100, rate=1000, pad_pre=0.1, pad_post=0.05)
