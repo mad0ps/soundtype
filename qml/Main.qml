@@ -185,6 +185,10 @@ MainView {
             setHandler("model", function (name) {
                 root.activeModel = name;
                 root.modelSwitchBusy = false;
+                // ручной тап по OptionSelector рвёт binding selectedIndex,
+                // поэтому при внешней смене профиля (кнопка «Вернуться» на
+                // оверлее) двигаем селектор явно
+                modelSelector.selectedIndex = name === "gigaam" ? 1 : 0;
                 // оверлей закачки актуален для прежнего выбора; если и для
                 // нового профиля чего-то не хватает, deps-missing вернёт его
                 root.depsMissing = false;
