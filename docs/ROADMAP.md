@@ -46,23 +46,35 @@ plan.
 - [ ] "New line" by voice + inhibit screen dimming while recording. (S)
 
 ### Phase 2 — "Quality" (one change at a time)
-- [ ] **Eval harness FIRST**: a corpus of 20-30 real dictations (ru + mixed),
-      reference transcripts, a WER/CER + terms accuracy script. Multiplies
-      everything else. (S)
-- [ ] **Hotwords + modified_beam_search**: measure RTFx on the N10 → enable
-      (possibly only at low confidence via ys_log_probs). (M)
-- [ ] **Post-replacement module**: a transliteration glossary
+- [x] **Eval harness FIRST** (#6): corpus of real dictations (ru + mixed),
+      reference transcripts, WER/CER + term-accuracy on jiwer, whole|vad
+      runners on sherpa-onnx. Done — multiplies everything else. (S)
+- [x] **Model profiles + GigaAM-v3** (#12, v0.9.0): selectable Russian
+      (GigaAM-v3 e2e int8) / multilingual (Parakeet) profiles. GigaAM is the
+      daily driver and gives **punctuation and ё out of the box** — which
+      retires several items below. (M)
+- [ ] **Post-replacement module** (#8): a transliteration glossary
       («депло»→«deploy») + "add replacement" with a tap from history;
-      case-insensitivity via casefold, Cyrillic word boundaries. (S-M)
-- [ ] **Yoficator**: Parakeet doesn't know «ё» (its corpora lack it) — a
-      dictionary pass over unambiguous words (еще→ещё, зеленый→зелёный),
-      leave homographs (все/всё) alone; ready-made dictionaries exist in
-      open source (yoficator). (S)
-- [ ] AGC/gain before VAD (a quiet microphone hurts both VAD and ASR). (S)
-- [ ] R&D: export silero_te to ONNX on the desktop; a "pure Russian" profile
-      on GigaAM-v3 e2e; GTCRN denoise behind a toggle. (L, one at a time)
-- [ ] v1.2 overlap+LCS at segment boundaries — after the harness, so the
-      effect can be measured. (M)
+      case-insensitivity via casefold, Cyrillic word boundaries. The one
+      remaining P2 — the real remaining quality value. (S-M)
+- [~] **Hotwords + modified_beam_search** (#7): downgraded — ~80% covered by
+      the post-replacement glossary (#8) at zero decode cost, vs beam search
+      2-4x greedy on the N10. Pursue only if #8 proves insufficient. (M)
+- [x] ~~**Yoficator** (#9)~~ — **dropped**: premise was "Parakeet lacks ё";
+      GigaAM (the primary Russian profile) restores ё natively. Parakeet-only
+      concern, not worth it.
+- [x] ~~AGC/gain before VAD (#10)~~ — **dropped (measured negative)**: agg WER
+      +1.70pp, quiet clips +5.18pp; gain doesn't change SNR and amplified
+      noise moves VAD boundaries.
+- [x] ~~silero_te → ONNX for Russian punctuation (#11)~~ — **dropped**: GigaAM
+      punctuates natively; silero_te is a torch.package + CC BY-NC dead-end.
+- [x] ~~GTCRN denoise before VAD (#13)~~ — **dropped**: same class as #10
+      (pre-VAD processing), high regression risk on clean audio; revisit only
+      with a real noisy-environment A/B win.
+- [x] ~~v1.2 overlap+LCS at segment boundaries (#14)~~ — **dropped (measured
+      negative)**: per-phrase cold decode re-transcribes the overlap
+      differently → LCS misses → garbage; agg WER +0.58..+2.12pp, boundary
+      damage up to 81%. Infra kept behind OVERLAP=0.0.
 
 ### Phase 3 — "Architecture" (architect's order: API → shim → engine → OTA)
 - [ ] **D-Bus API `org.soundtype.Engine1`**: a versioned contract
