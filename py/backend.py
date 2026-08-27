@@ -259,11 +259,20 @@ class Dictation(object):
         self.stop_flag = threading.Event()
         self.lock = threading.Lock()
         self.busy = threading.Lock()
+        self.loading = False
 
     # ---------- загрузка движка ----------
 
     def load(self):
+        with self.lock:
+            if self.loading:
+                # загрузка уже идёт; если выбор успел смениться, хвост
+                # work() сам перегрузит движок на актуальный профиль (#27)
+                return
+            self.loading = True
+
         def work():
+            active = None
             try:
                 emit('status', 'loading')
                 # Каталог pylibs мог появиться уже ПОСЛЕ старта процесса
@@ -301,10 +310,30 @@ class Dictation(object):
                     self.recognizer = rec
                     self.model_name = active
                     self.vad = vad
-                emit('ready', active)
+                # выбор могли сменить, пока грузились: ready об устаревшем
+                # движке не объявляем — ниже перегрузимся на актуальный
+                if models.get_active(DATA) == active:
+                    emit('ready', active)
             except Exception as exc:
                 emit('error', 'Не удалось загрузить движок: %s' % exc)
+            finally:
+                with self.lock:
+                    self.loading = False
+            self._reload_if_switched(active)
         threading.Thread(target=work, daemon=True).start()
+
+    def _reload_if_switched(self, loaded):
+        """Схлопывает гонку #27: профиль сменили во время загрузки.
+
+        Вызывается из потока загрузки после сброса loading. Каким бы ни был
+        порядок потоков, последним всегда выполняется этот хвост — и он
+        приводит движок к профилю из настроек.
+        """
+        if loaded is None or models.get_active(DATA) == loaded:
+            return False
+        self.unload()
+        _ensure_loaded()
+        return True
 
     def unload(self):
         import gc
@@ -561,26 +590,39 @@ def model_stale():
             and _engine.model_name != models.get_active(DATA))
 
 
+def _deps_missing_info():
+    """Довесок к deps-missing для оверлея закачки (#28): размер выбранной
+    модели и профиль, на который можно откатиться без сети."""
+    active = models.get_active(DATA)
+    fb = models.fallback_profile(active, DATA)
+    return {
+        'size': models.REGISTRY[active].get('size', ''),
+        'fallback': fb or '',
+        'fallback_label': models.REGISTRY[fb]['label'] if fb else '',
+    }
+
+
+def _ensure_loaded():
+    """Грузим движок, если для активного профиля всё скачано."""
+    miss = downloader.missing()
+    if miss:
+        emit('deps-missing', miss, _deps_missing_info())
+    else:
+        _engine.load()
+
+
 def set_model(name):
     """Выбор профиля из настроек приложения."""
     models.set_active(name, DATA)
     if _engine.recognizer is not None:
         _engine.unload()
     emit('model', name)
-    miss = downloader.missing()
-    if miss:
-        emit('deps-missing', miss)
-    else:
-        _engine.load()
+    _ensure_loaded()
 
 
 def init(_ignored=None):
     emit('model', models.get_active(DATA))
-    miss = downloader.missing()
-    if miss:
-        emit('deps-missing', miss)
-        return
-    _engine.load()
+    _ensure_loaded()
 
 
 def start():
