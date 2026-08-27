@@ -16,12 +16,14 @@ REGISTRY = {
         'files': {'encoder': 'encoder.int8.onnx', 'decoder': 'decoder.int8.onnx',
                   'joiner': 'joiner.int8.onnx', 'tokens': 'tokens.txt'},
         'label': 'Мультиязычная (Parakeet v3)',
+        'size': '≈0,5 ГБ',
     },
     'gigaam': {
         'dir': 'gigaam-e2e',
         'files': {'encoder': 'encoder.int8.onnx', 'decoder': 'decoder.onnx',
                   'joiner': 'joiner.onnx', 'tokens': 'tokens.txt'},
         'label': 'Русская (GigaAM-v3)',
+        'size': '≈0,33 ГБ',
     },
 }
 
@@ -68,3 +70,15 @@ def model_files(name, data_dir):
 
 def probe_path(name, data_dir):
     return model_files(name, data_dir)['encoder']
+
+
+def fallback_profile(active, data_dir):
+    """Другой профиль, чья модель уже лежит на диске.
+
+    Спасательный выход с оверлея закачки (#28): если выбранный профиль не
+    скачан, а сети нет, пользователь возвращается сюда без трафика.
+    """
+    for name in REGISTRY:
+        if name != active and os.path.exists(probe_path(name, data_dir)):
+            return name
+    return None

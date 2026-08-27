@@ -8,7 +8,10 @@ import backend
 def test_init_reports_missing_deps(events, monkeypatch):
     monkeypatch.setattr(backend.downloader, 'missing', lambda: ['parakeet'])
     backend.init()
-    assert ('deps-missing', ['parakeet']) in events
+    ev = [e for e in events if e[0] == 'deps-missing']
+    assert ev and ev[0][1] == ['parakeet']
+    # третьим аргументом едет инфо для оверлея (#28)
+    assert set(ev[0][2]) == {'size', 'fallback', 'fallback_label'}
 
 
 def test_init_loads_engine_when_deps_ok(events, monkeypatch):

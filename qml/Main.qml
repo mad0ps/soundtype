@@ -32,6 +32,9 @@ MainView {
     property string downloadStage: ""
     property int downloadPct: -1
     property string downloadError: ""
+    property string activeModelSize: ""
+    property string fallbackModel: ""
+    property string fallbackLabel: ""
 
     function mmss(s) {
         var m = Math.floor(s / 60);
@@ -82,9 +85,13 @@ MainView {
             setHandler("status", function (s) {
                 root.statusText = "Загрузка модели…";
             });
-            setHandler("deps-missing", function (what) {
+            setHandler("deps-missing", function (what, info) {
+                info = info || {};
                 root.depsMissing = true;
                 root.statusText = "Нужно скачать модель";
+                root.activeModelSize = info.size || "";
+                root.fallbackModel = info.fallback || "";
+                root.fallbackLabel = info.fallback_label || "";
             });
             setHandler("download-progress", function (stage, pct) {
                 root.downloading = true;
@@ -104,6 +111,7 @@ MainView {
             });
             setHandler("ready", function (name) {
                 root.ready = true;
+                root.depsMissing = false;
                 root.statusText = "Готово — нажми микрофон";
             });
             setHandler("elapsed", function (sec) {
@@ -177,6 +185,13 @@ MainView {
             setHandler("model", function (name) {
                 root.activeModel = name;
                 root.modelSwitchBusy = false;
+                // ручной тап по OptionSelector рвёт binding selectedIndex,
+                // поэтому при внешней смене профиля (кнопка «Вернуться» на
+                // оверлее) двигаем селектор явно
+                modelSelector.selectedIndex = name === "gigaam" ? 1 : 0;
+                // оверлей закачки актуален для прежнего выбора; если и для
+                // нового профиля чего-то не хватает, deps-missing вернёт его
+                root.depsMissing = false;
                 // движок только что выгружен (смена профиля) либо ещё не
                 // загружен (старт) — микрофон разблокирует событие 'ready'
                 root.ready = false;
@@ -478,8 +493,10 @@ MainView {
                         width: parent.width
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.Wrap
-                        text: "Для работы нужно скачать модель распознавания "
-                              + "(0.3–0.5 ГБ в зависимости от модели). Лучше делать это по Wi-Fi.\n"
+                        text: "Для работы нужно скачать модель распознавания ("
+                              + (root.activeModelSize.length ? root.activeModelSize
+                                                             : "0,3–0,5 ГБ")
+                              + "). Лучше делать это по Wi-Fi.\n"
                               + "После загрузки приложение работает полностью офлайн."
                     }
                     Label {
@@ -514,6 +531,14 @@ MainView {
                         color: LomiriColors.green
                         text: root.downloadError.length ? "Повторить" : "Скачать"
                         onClicked: py.call("backend.fetch_deps", [])
+                    }
+                    Button {
+                        // спасательный выход (#28): без сети возвращаемся на
+                        // профиль, чья модель уже скачана
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: !root.downloading && root.fallbackModel.length > 0
+                        text: "Вернуться: " + root.fallbackLabel
+                        onClicked: py.call("backend.set_model", [root.fallbackModel])
                     }
                 }
             }

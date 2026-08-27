@@ -54,3 +54,26 @@ def test_paths(tmp_path):
     assert files['encoder'] == os.path.join(d, 'models', 'gigaam-e2e', 'encoder.int8.onnx')
     assert files['decoder'].endswith('gigaam-e2e/decoder.onnx')
     assert models.probe_path('parakeet', d).endswith('parakeet/encoder.int8.onnx')
+
+
+# ---------- fallback_profile (#28) ----------
+
+def _touch_probe(name, data_dir):
+    import os
+    path = models.probe_path(name, str(data_dir))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, 'w').close()
+
+
+def test_fallback_profile_none_when_nothing_downloaded(tmp_path):
+    assert models.fallback_profile('gigaam', str(tmp_path)) is None
+
+
+def test_fallback_profile_finds_other_downloaded(tmp_path):
+    _touch_probe('parakeet', tmp_path)
+    assert models.fallback_profile('gigaam', str(tmp_path)) == 'parakeet'
+
+
+def test_fallback_profile_ignores_active_itself(tmp_path):
+    _touch_probe('gigaam', tmp_path)
+    assert models.fallback_profile('gigaam', str(tmp_path)) is None
