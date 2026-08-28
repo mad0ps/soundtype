@@ -70,6 +70,25 @@ MainView {
             toast.show("Скопировано в буфер обмена");
     }
 
+    // #8: вызовы backend для замен — на root, где py/toast гарантированно
+    // в scope (диалог из PopupUtils может не видеть вложенные id).
+    function saveReplacement(rid, heard, written) {
+        if (rid < 0)
+            py.call("backend.replacements_add", [heard, written]);
+        else
+            py.call("backend.replacements_update", [rid, heard, written]);
+        toast.show("Замена сохранена");
+    }
+    function deleteReplacement(rid) {
+        py.call("backend.replacements_delete", [rid]);
+    }
+    function toggleReplacement(rid, on) {
+        py.call("backend.replacements_toggle", [rid, on]);
+    }
+    function addReplacementsPack() {
+        py.call("backend.replacements_add_pack", []);
+    }
+
     TextEdit {
         id: clipboardHelper
         visible: false
@@ -232,12 +251,7 @@ MainView {
                 color: LomiriColors.green
                 enabled: heardField.text.length > 0 && writtenField.text.length > 0
                 onClicked: {
-                    if (dlg.rid < 0)
-                        py.call("backend.replacements_add",
-                                [heardField.text, writtenField.text]);
-                    else
-                        py.call("backend.replacements_update",
-                                [dlg.rid, heardField.text, writtenField.text]);
+                    root.saveReplacement(dlg.rid, heardField.text, writtenField.text);
                     PopupUtils.close(dlg);
                 }
             }
@@ -767,7 +781,7 @@ MainView {
                     Action {
                         iconName: "compose"
                         text: "Набор RU"
-                        onTriggered: py.call("backend.replacements_add_pack", [])
+                        onTriggered: root.addReplacementsPack()
                     }
                 ]
             }
@@ -792,8 +806,7 @@ MainView {
                         Switch {
                             SlotsLayout.position: SlotsLayout.Trailing
                             checked: model.on
-                            onClicked: py.call("backend.replacements_toggle",
-                                               [model.rid, checked])
+                            onClicked: root.toggleReplacement(model.rid, checked)
                         }
                     }
                     onClicked: PopupUtils.open(ruleDialog, null,
@@ -801,8 +814,7 @@ MainView {
                     leadingActions: ListItemActions {
                         actions: [ Action {
                             iconName: "delete"
-                            onTriggered: py.call("backend.replacements_delete",
-                                                 [model.rid])
+                            onTriggered: root.deleteReplacement(model.rid)
                         } ]
                     }
                 }
