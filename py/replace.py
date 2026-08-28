@@ -133,3 +133,41 @@ def apply(text, data_dir):
         if r['on']:
             gloss[r['heard']] = r['written']
     return apply_text(text, gloss)
+
+
+# Стартовый набор «разработка (RU)»: услышано(кириллица) -> записано.
+# Алиасы уже развёрнуты в отдельные пары (движок работает по одиночным heard).
+PACK_RU_TECH = [
+    ('депло', 'deploy'), ('деплой', 'deploy'), ('задеплоить', 'deploy'),
+    ('коммит', 'commit'), ('закоммитить', 'commit'),
+    ('пуш', 'push'), ('запушить', 'push'),
+    ('пул реквест', 'pull request'), ('пиар', 'pull request'),
+    ('мёрдж', 'merge'), ('смёрджить', 'merge'),
+    ('кубер', 'kubernetes'), ('кубернетес', 'kubernetes'),
+    ('докер', 'docker'), ('редис', 'redis'),
+    ('постгрес', 'postgres'), ('постгря', 'postgres'),
+    ('кэш', 'cache'), ('эндпоинт', 'endpoint'),
+    ('реквест', 'request'), ('респонс', 'response'),
+    ('роллбэк', 'rollback'), ('откатить', 'rollback'),
+    ('билд', 'build'), ('дебаг', 'debug'), ('дебажить', 'debug'),
+    ('логи', 'logs'), ('таск', 'task'), ('ветка', 'branch'),
+    ('код ревью', 'code review'),
+]
+
+
+def _norm(s):
+    """Ключ для сравнения heard: регистр + ё->е."""
+    return s.casefold().replace('ё', 'е')
+
+
+def add_pack(data_dir):
+    """Добавляем пары пака, чьих heard ещё нет (без учёта регистра/ё). -> сколько."""
+    existing = {_norm(r['heard']) for r in load(data_dir)}
+    added = 0
+    for heard, written in PACK_RU_TECH:
+        if _norm(heard) in existing:
+            continue
+        add(heard, written, data_dir)
+        existing.add(_norm(heard))
+        added += 1
+    return added
