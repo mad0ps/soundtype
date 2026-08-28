@@ -1,6 +1,7 @@
 import QtQuick 2.9
 import QtQuick.Layouts 1.3
 import Lomiri.Components 1.3
+import Lomiri.Components.Popups 1.3
 import io.thp.pyotherside 1.5
 import QtSystemInfo 5.5
 
@@ -67,6 +68,32 @@ MainView {
     function copyAll() {
         if (root.copyText(transcript.text))
             toast.show("Скопировано в буфер обмена");
+    }
+
+    // #8: вызовы backend для замен — на root, где py/toast гарантированно
+    // в scope (диалог из PopupUtils может не видеть вложенные id).
+    function saveReplacement(rid, heard, written) {
+        var h = (heard || "").trim();
+        var w = (written || "").trim();
+        if (h.length === 0 || w.length === 0) {
+            toast.show("Заполни оба поля");
+            return false;
+        }
+        if (rid < 0)
+            py.call("backend.replacements_add", [h, w]);
+        else
+            py.call("backend.replacements_update", [rid, h, w]);
+        toast.show("Замена сохранена");
+        return true;
+    }
+    function deleteReplacement(rid) {
+        py.call("backend.replacements_delete", [rid]);
+    }
+    function toggleReplacement(rid, on) {
+        py.call("backend.replacements_toggle", [rid, on]);
+    }
+    function addReplacementsPack() {
+        py.call("backend.replacements_add_pack", []);
     }
 
     TextEdit {
@@ -193,6 +220,15 @@ MainView {
                 root.ready = false;
             });
 
+            setHandler("replacements", function (rules) {
+                replacementsModel.clear();
+                for (var i = 0; i < rules.length; i++)
+                    replacementsModel.append({
+                        rid: rules[i].id, heard: rules[i].heard,
+                        written: rules[i].written, on: rules[i].on
+                    });
+            });
+
             importModule("backend", function () {
                 call("backend.init", []);
             });
@@ -205,6 +241,39 @@ MainView {
     }
 
     ListModel { id: historyModel }
+    ListModel { id: replacementsModel }
+
+    Component {
+        id: ruleDialog
+        Dialog {
+            id: dlg
+            property int rid: -1
+            property string initHeard: ""
+            property string initWritten: ""
+            title: rid < 0 ? "Новая замена" : "Правка замены"
+            Component.onCompleted: {
+                heardField.text = dlg.initHeard;
+                writtenField.text = dlg.initWritten;
+            }
+            TextField { id: heardField; placeholderText: "услышано (напр. депло)" }
+            TextField { id: writtenField; placeholderText: "записать как (напр. deploy)" }
+            Button {
+                text: "Сохранить"
+                color: LomiriColors.green
+                // кнопка всегда активна. Maliit держит набранное слово в
+                // preedit до Enter/пробела и НЕ коммитит его по тапу кнопки —
+                // поэтому принудительно сбрасываем preedit в .text перед
+                // чтением полей, иначе они кажутся пустыми (Khan: нужно было
+                // жать Enter). Проверку «оба поля» делаем тут же.
+                onClicked: {
+                    Qt.inputMethod.commit();
+                    if (root.saveReplacement(dlg.rid, heardField.text, writtenField.text))
+                        PopupUtils.close(dlg);
+                }
+            }
+            Button { text: "Отмена"; onClicked: PopupUtils.close(dlg) }
+        }
+    }
 
     PageStack {
         id: stack
@@ -404,6 +473,15 @@ MainView {
                     color: theme.palette.normal.backgroundTertiaryText
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
+                }
+
+                Button {
+                    text: "Замены текста"
+                    Layout.fillWidth: true
+                    onClicked: {
+                        stack.push(replacementsPage);
+                        py.call("backend.replacements_list", []);
+                    }
                 }
 
                 // ---------- кнопка записи ----------
@@ -613,6 +691,19 @@ MainView {
                     id: row
                     height: entry.height + units.gu(2)
 
+                    // #8: одним свайпом завести замену из записи истории
+                    leadingActions: ListItemActions {
+                        actions: [ Action {
+                            iconName: "edit"
+                            text: "Замена"
+                            onTriggered: PopupUtils.open(ruleDialog, null, {
+                                rid: -1,
+                                initHeard: (model.body.trim().split(/\s+/)[0] || ""),
+                                initWritten: ""
+                            })
+                        } ]
+                    }
+
                     Column {
                         id: entry
                         anchors {
@@ -683,6 +774,75 @@ MainView {
                     opacity: 0.4
                     text: "Пока пусто.\nВсё, что распознается, сохраняется сюда."
                     visible: historyModel.count === 0 && historyPage.loaded
+                }
+            }
+        }
+
+        // ------------------------------------------ экран замен (#8)
+
+        Page {
+            id: replacementsPage
+            visible: false
+
+            header: PageHeader {
+                id: replacementsHeader
+                title: "Замены текста"
+                trailingActionBar.actions: [
+                    Action {
+                        iconName: "add"
+                        text: "Добавить"
+                        onTriggered: PopupUtils.open(ruleDialog, null,
+                            {rid: -1, initHeard: "", initWritten: ""})
+                    },
+                    Action {
+                        iconName: "compose"
+                        text: "Набор RU"
+                        onTriggered: root.addReplacementsPack()
+                    }
+                ]
+            }
+
+            ListView {
+                anchors {
+                    top: replacementsHeader.bottom
+                    left: parent.left
+                    right: parent.right
+                    bottom: parent.bottom
+                }
+                clip: true
+                model: replacementsModel
+
+                delegate: ListItem {
+                    height: units.gu(7)
+                    ListItemLayout {
+                        title.text: model.heard + "  →  " + model.written
+                        title.color: model.on
+                            ? theme.palette.normal.baseText
+                            : theme.palette.normal.backgroundTertiaryText
+                        Switch {
+                            SlotsLayout.position: SlotsLayout.Trailing
+                            checked: model.on
+                            onClicked: root.toggleReplacement(model.rid, checked)
+                        }
+                    }
+                    onClicked: PopupUtils.open(ruleDialog, null,
+                        {rid: model.rid, initHeard: model.heard, initWritten: model.written})
+                    leadingActions: ListItemActions {
+                        actions: [ Action {
+                            iconName: "delete"
+                            onTriggered: root.deleteReplacement(model.rid)
+                        } ]
+                    }
+                }
+
+                Label {
+                    anchors.centerIn: parent
+                    width: parent.width - units.gu(8)
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    opacity: 0.4
+                    text: "Пока нет замен.\nДобавь правило или подключи набор RU."
+                    visible: replacementsModel.count === 0
                 }
             }
         }

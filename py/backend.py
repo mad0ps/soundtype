@@ -44,6 +44,7 @@ import pyotherside  # noqa: E402
 import streaming  # noqa: E402
 import downloader  # noqa: E402
 import models  # noqa: E402
+import replace  # noqa: E402
 
 RATE = 16000
 CHANNELS = 1
@@ -244,6 +245,41 @@ def history_clear():
     except Exception as exc:
         emit('error', 'Не удалось очистить историю: %s' % exc)
         return False
+
+
+def _emit_replacements():
+    rules = replace.load(DATA)
+    emit('replacements', rules)
+    return rules
+
+
+def replacements_list():
+    return _emit_replacements()
+
+
+def replacements_add(heard, written):
+    replace.add(heard, written, DATA)
+    return _emit_replacements()
+
+
+def replacements_update(rule_id, heard, written):
+    replace.update(int(rule_id), heard, written, DATA)
+    return _emit_replacements()
+
+
+def replacements_delete(rule_id):
+    replace.delete(int(rule_id), DATA)
+    return _emit_replacements()
+
+
+def replacements_toggle(rule_id, on):
+    replace.toggle(int(rule_id), bool(on), DATA)
+    return _emit_replacements()
+
+
+def replacements_add_pack():
+    replace.add_pack(DATA)
+    return _emit_replacements()
 
 
 # ---------------------------------------------------------------- движок
@@ -475,7 +511,7 @@ class Dictation(object):
                                              phrase.overlap, CAP_PAUSE)
                 if chunk:
                     texts.append(chunk)
-        return ''.join(texts).strip()
+        return replace.apply(''.join(texts).strip(), DATA)
 
     def _session(self):
         worker = None
@@ -522,6 +558,7 @@ class Dictation(object):
                 worker.put(whole)
 
             full = worker.close(timeout=180)
+            full = replace.apply(full, DATA)
             emit('transcribing', False)
 
             if short:
