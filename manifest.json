@@ -1,7 +1,7 @@
 {
     "name": "soundtype.n0madd3v0ps",
     "title": "SoundType",
-    "version": "0.9.0",
+    "version": "0.10.0",
     "description": "Офлайн-диктовка на Parakeet: говори, жми стоп — текст сразу в буфере обмена",
     "maintainer": "mad0ps <190164123+mad0ps@users.noreply.github.com>",
     "architecture": "arm64",
