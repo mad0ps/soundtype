@@ -260,9 +260,13 @@ MainView {
             Button {
                 text: "Сохранить"
                 color: LomiriColors.green
-                // кнопка всегда активна; проверку «оба поля» делаем в момент
-                // нажатия — тогда preedit клавиатуры уже закоммичен в .text
+                // кнопка всегда активна. Maliit держит набранное слово в
+                // preedit до Enter/пробела и НЕ коммитит его по тапу кнопки —
+                // поэтому принудительно сбрасываем preedit в .text перед
+                // чтением полей, иначе они кажутся пустыми (Khan: нужно было
+                // жать Enter). Проверку «оба поля» делаем тут же.
                 onClicked: {
+                    Qt.inputMethod.commit();
                     if (root.saveReplacement(dlg.rid, heardField.text, writtenField.text))
                         PopupUtils.close(dlg);
                 }
