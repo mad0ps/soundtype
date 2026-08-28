@@ -73,11 +73,18 @@ MainView {
     // #8: вызовы backend для замен — на root, где py/toast гарантированно
     // в scope (диалог из PopupUtils может не видеть вложенные id).
     function saveReplacement(rid, heard, written) {
+        var h = (heard || "").trim();
+        var w = (written || "").trim();
+        if (h.length === 0 || w.length === 0) {
+            toast.show("Заполни оба поля");
+            return false;
+        }
         if (rid < 0)
-            py.call("backend.replacements_add", [heard, written]);
+            py.call("backend.replacements_add", [h, w]);
         else
-            py.call("backend.replacements_update", [rid, heard, written]);
+            py.call("backend.replacements_update", [rid, h, w]);
         toast.show("Замена сохранена");
+        return true;
     }
     function deleteReplacement(rid) {
         py.call("backend.replacements_delete", [rid]);
@@ -241,18 +248,23 @@ MainView {
         Dialog {
             id: dlg
             property int rid: -1
-            property alias heard: heardField.text
-            property alias written: writtenField.text
+            property string initHeard: ""
+            property string initWritten: ""
             title: rid < 0 ? "Новая замена" : "Правка замены"
+            Component.onCompleted: {
+                heardField.text = dlg.initHeard;
+                writtenField.text = dlg.initWritten;
+            }
             TextField { id: heardField; placeholderText: "услышано (напр. депло)" }
             TextField { id: writtenField; placeholderText: "записать как (напр. deploy)" }
             Button {
                 text: "Сохранить"
                 color: LomiriColors.green
-                enabled: heardField.text.length > 0 && writtenField.text.length > 0
+                // кнопка всегда активна; проверку «оба поля» делаем в момент
+                // нажатия — тогда preedit клавиатуры уже закоммичен в .text
                 onClicked: {
-                    root.saveReplacement(dlg.rid, heardField.text, writtenField.text);
-                    PopupUtils.close(dlg);
+                    if (root.saveReplacement(dlg.rid, heardField.text, writtenField.text))
+                        PopupUtils.close(dlg);
                 }
             }
             Button { text: "Отмена"; onClicked: PopupUtils.close(dlg) }
@@ -682,8 +694,8 @@ MainView {
                             text: "Замена"
                             onTriggered: PopupUtils.open(ruleDialog, null, {
                                 rid: -1,
-                                heard: (model.body.trim().split(/\s+/)[0] || ""),
-                                written: ""
+                                initHeard: (model.body.trim().split(/\s+/)[0] || ""),
+                                initWritten: ""
                             })
                         } ]
                     }
@@ -776,7 +788,7 @@ MainView {
                         iconName: "add"
                         text: "Добавить"
                         onTriggered: PopupUtils.open(ruleDialog, null,
-                            {rid: -1, heard: "", written: ""})
+                            {rid: -1, initHeard: "", initWritten: ""})
                     },
                     Action {
                         iconName: "compose"
@@ -810,7 +822,7 @@ MainView {
                         }
                     }
                     onClicked: PopupUtils.open(ruleDialog, null,
-                        {rid: model.rid, heard: model.heard, written: model.written})
+                        {rid: model.rid, initHeard: model.heard, initWritten: model.written})
                     leadingActions: ListItemActions {
                         actions: [ Action {
                             iconName: "delete"
