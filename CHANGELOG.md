@@ -1,7 +1,30 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 — text replacements & recognition-quality cleanup
 
+* **Post-processing replacements (issue #8)**: a user glossary that rewrites
+  the final dictation text by whole-word rules («депло» → `deploy`). New
+  **"Замены текста"** screen in settings — add/edit/delete rules, a per-rule
+  enable switch, a swipe **"Замена"** action on history entries to seed a
+  rule from a past transcript, and a toggleable **RU-tech starter pack**
+  (deploy/commit/push/…). Matching is Cyrillic whole-word, case-insensitive
+  with intentional casing preserved (`iOS` stays `iOS`), «ё»/«е» folded, and
+  multi-word phrases supported — all on the Python standard library, no new
+  bundled dependency. Applies to text dictated in the app; keyboard-streaming
+  mode is a later step.
+* **Escape from the download overlay (issue #28)**: switching to a
+  not-yet-downloaded profile now shows the model's real size and a
+  **"Вернуться: <profile>"** button, so you can return to a working,
+  already-downloaded model without connectivity instead of being stuck.
+* **Engine double-load race fixed (issue #27)**: switching the model while
+  the engine is still loading no longer spawns a second concurrent load; the
+  loader re-checks the selected profile when it finishes and converges on it.
+* **Model selector fixes**: the settings selector now follows an external
+  profile switch (e.g. the overlay's "return" button) instead of rendering
+  blank, and its casing is preserved.
+* **Text fields: no Enter needed to save** — dialog forms now commit the
+  keyboard's pre-edit on button tap, so a freshly typed value saves on the
+  first tap of the confirm button.
 * Overlap+LCS merge infrastructure at VAD segment boundaries (issue #14):
   `Segmenter` can re-include backward audio context from the previous
   phrase at a junction, and `merge_overlap`/`join_chunk` dedupe the
