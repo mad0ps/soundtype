@@ -1,6 +1,7 @@
 import QtQuick 2.9
 import QtQuick.Layouts 1.3
 import Lomiri.Components 1.3
+import Lomiri.Components.Popups 1.3
 import io.thp.pyotherside 1.5
 import QtSystemInfo 5.5
 
@@ -193,6 +194,15 @@ MainView {
                 root.ready = false;
             });
 
+            setHandler("replacements", function (rules) {
+                replacementsModel.clear();
+                for (var i = 0; i < rules.length; i++)
+                    replacementsModel.append({
+                        rid: rules[i].id, heard: rules[i].heard,
+                        written: rules[i].written, on: rules[i].on
+                    });
+            });
+
             importModule("backend", function () {
                 call("backend.init", []);
             });
@@ -205,6 +215,35 @@ MainView {
     }
 
     ListModel { id: historyModel }
+    ListModel { id: replacementsModel }
+
+    Component {
+        id: ruleDialog
+        Dialog {
+            id: dlg
+            property int rid: -1
+            property alias heard: heardField.text
+            property alias written: writtenField.text
+            title: rid < 0 ? "Новая замена" : "Правка замены"
+            TextField { id: heardField; placeholderText: "услышано (напр. депло)" }
+            TextField { id: writtenField; placeholderText: "записать как (напр. deploy)" }
+            Button {
+                text: "Сохранить"
+                color: LomiriColors.green
+                enabled: heardField.text.length > 0 && writtenField.text.length > 0
+                onClicked: {
+                    if (dlg.rid < 0)
+                        py.call("backend.replacements_add",
+                                [heardField.text, writtenField.text]);
+                    else
+                        py.call("backend.replacements_update",
+                                [dlg.rid, heardField.text, writtenField.text]);
+                    PopupUtils.close(dlg);
+                }
+            }
+            Button { text: "Отмена"; onClicked: PopupUtils.close(dlg) }
+        }
+    }
 
     PageStack {
         id: stack
@@ -404,6 +443,15 @@ MainView {
                     color: theme.palette.normal.backgroundTertiaryText
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
+                }
+
+                Button {
+                    text: "Замены текста"
+                    Layout.fillWidth: true
+                    onClicked: {
+                        stack.push(replacementsPage);
+                        py.call("backend.replacements_list", []);
+                    }
                 }
 
                 // ---------- кнопка записи ----------
@@ -613,6 +661,19 @@ MainView {
                     id: row
                     height: entry.height + units.gu(2)
 
+                    // #8: одним свайпом завести замену из записи истории
+                    leadingActions: ListItemActions {
+                        actions: [ Action {
+                            iconName: "edit"
+                            text: "Замена"
+                            onTriggered: PopupUtils.open(ruleDialog, null, {
+                                rid: -1,
+                                heard: (model.body.trim().split(/\s+/)[0] || ""),
+                                written: ""
+                            })
+                        } ]
+                    }
+
                     Column {
                         id: entry
                         anchors {
@@ -683,6 +744,77 @@ MainView {
                     opacity: 0.4
                     text: "Пока пусто.\nВсё, что распознается, сохраняется сюда."
                     visible: historyModel.count === 0 && historyPage.loaded
+                }
+            }
+        }
+
+        // ------------------------------------------ экран замен (#8)
+
+        Page {
+            id: replacementsPage
+            visible: false
+
+            header: PageHeader {
+                id: replacementsHeader
+                title: "Замены текста"
+                trailingActionBar.actions: [
+                    Action {
+                        iconName: "add"
+                        text: "Добавить"
+                        onTriggered: PopupUtils.open(ruleDialog, null,
+                            {rid: -1, heard: "", written: ""})
+                    },
+                    Action {
+                        iconName: "compose"
+                        text: "Набор RU"
+                        onTriggered: py.call("backend.replacements_add_pack", [])
+                    }
+                ]
+            }
+
+            ListView {
+                anchors {
+                    top: replacementsHeader.bottom
+                    left: parent.left
+                    right: parent.right
+                    bottom: parent.bottom
+                }
+                clip: true
+                model: replacementsModel
+
+                delegate: ListItem {
+                    height: units.gu(7)
+                    ListItemLayout {
+                        title.text: model.heard + "  →  " + model.written
+                        title.color: model.on
+                            ? theme.palette.normal.baseText
+                            : theme.palette.normal.backgroundTertiaryText
+                        Switch {
+                            SlotsLayout.position: SlotsLayout.Trailing
+                            checked: model.on
+                            onClicked: py.call("backend.replacements_toggle",
+                                               [model.rid, checked])
+                        }
+                    }
+                    onClicked: PopupUtils.open(ruleDialog, null,
+                        {rid: model.rid, heard: model.heard, written: model.written})
+                    leadingActions: ListItemActions {
+                        actions: [ Action {
+                            iconName: "delete"
+                            onTriggered: py.call("backend.replacements_delete",
+                                                 [model.rid])
+                        } ]
+                    }
+                }
+
+                Label {
+                    anchors.centerIn: parent
+                    width: parent.width - units.gu(8)
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    opacity: 0.4
+                    text: "Пока нет замен.\nДобавь правило или подключи набор RU."
+                    visible: replacementsModel.count === 0
                 }
             }
         }
