@@ -24,7 +24,10 @@ def _phrase(key):
 
 
 def _restore_case(matched, repl):
-    """Переносим регистр совпадения на замену: ВЕСЬ верхний / Первая / как есть."""
+    """Переносим регистр совпадения на замену ТОЛЬКО если в замене нет
+    намеренного регистра (иначе iOS/macOS/GitHub затёрлись бы)."""
+    if any(c.isupper() for c in repl):
+        return repl
     if len(matched) > 1 and matched.isupper():
         return repl.upper()
     if matched[:1].isupper():
@@ -127,12 +130,22 @@ def toggle(rule_id, on, data_dir):
 
 
 def apply(text, data_dir):
-    """Применяем включённые правила к тексту (позже добавленное heard побеждает)."""
-    gloss = {}
-    for r in load(data_dir):
-        if r['on']:
-            gloss[r['heard']] = r['written']
-    return apply_text(text, gloss)
+    """Применяем включённые правила к тексту.
+
+    Дубликаты heard: точное совпадение строки — побеждает последнее добавленное
+    (ключ словаря перезаписывается); варианты по регистру/ё — это РАЗНЫЕ ключи,
+    в альтернации участвуют оба, и побеждает тот, что раньше по порядку следования.
+    Любая непредвиденная ошибка сборки/применения глоссария не должна ронять
+    транскрипцию пользователя -> возвращаем исходный текст как есть.
+    """
+    try:
+        gloss = {}
+        for r in load(data_dir):
+            if r['on']:
+                gloss[r['heard']] = r['written']
+        return apply_text(text, gloss)
+    except Exception:
+        return text
 
 
 # Стартовый набор «разработка (RU)»: услышано(кириллица) -> записано.

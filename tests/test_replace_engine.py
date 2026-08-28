@@ -52,3 +52,17 @@ def test_empty_glossary_noop():
 
 def test_digit_underscore_neighbor_not_matched():
     assert ap('кот3 кот_ кот', {'кот': 'cat'}) == 'кот3 кот_ cat'
+
+
+def test_written_mixed_case_preserved_first_word():
+    # намеренный регистр замены не затирается капитализацией совпадения
+    assert ap('Айос обновился', {'айос': 'iOS'}) == 'iOS обновился'
+
+
+def test_written_mixed_case_preserved_allcaps_match():
+    assert ap('АЙОС', {'айос': 'iOS'}) == 'iOS'
+
+
+def test_lowercase_written_still_restores_case():
+    assert ap('Депло', {'депло': 'deploy'}) == 'Deploy'
+    assert ap('ДЕПЛО', {'депло': 'deploy'}) == 'DEPLOY'
