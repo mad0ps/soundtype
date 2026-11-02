@@ -22,7 +22,14 @@ class PyOtherSideMock:
         svc = self.dbus_obj
         if event == 'done':
             text = args[0] if args else ""
-            svc.TranscriptionReady(text)
+            if svc.owner == 'app':
+                # Текст — приложению; клавиатуре пустой итог, чтобы она
+                # сбросила своё ожидание (пустой она не вставляет). Порядок
+                # важен: приложение по TranscriptionReady тоже сбрасывает Enter.
+                svc.AppTranscriptionReady(text)
+                svc.TranscriptionReady("")
+            else:
+                svc.TranscriptionReady(text)
         elif event == 'partial':
             # partial(idx, text) — фраза распозналась по ходу записи
             if len(args) > 1 and args[1]:
@@ -74,6 +81,10 @@ class SoundTypeService(dbus.service.Object):
         self.pending_start = False
         self.idle_timer_id = None
         self.display_cookie = None
+        # кто получит итог: 'keyboard' (TranscriptionReady) или 'app'
+        # (AppTranscriptionReady); решает последний toggle — куда
+        # остановили запись, туда и текст
+        self.owner = 'keyboard'
 
     # repowerd держит экран включённым, пока живёт cookie; при падении
     # процесса cookie снимается автоматически (привязан к D-Bus соединению)
@@ -125,6 +136,17 @@ class SoundTypeService(dbus.service.Object):
 
     @dbus.service.method("com.n0madd3v0ps.soundtype", in_signature='', out_signature='')
     def ToggleDictation(self):
+        self.toggle('keyboard')
+
+    # Для приложений, которые вставляют текст сами (кнопка микрофона в
+    # Терминале): итог уходит им отдельным сигналом, и клавиатура его не
+    # вставляет — вставка ровно одна при любом состоянии клавиатуры.
+    @dbus.service.method("com.n0madd3v0ps.soundtype", in_signature='', out_signature='')
+    def ToggleAppDictation(self):
+        self.toggle('app')
+
+    def toggle(self, owner):
+        self.owner = owner
         self.stop_idle_timer()
         if not self.listening:
             self.listening = True
@@ -169,26 +191,38 @@ class SoundTypeService(dbus.service.Object):
         self.start_idle_timer()
 
     @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')
+    def AppTranscriptionReady(self, text):
+        self.listening = False
+        self.release_display_on()
+        self.start_idle_timer()
+
+    @dbus.service.signal("com.n0madd3v0ps.soundtype", signature='s')
     def Error(self, message):
         self.listening = False
         self.release_display_on()
         self.start_idle_timer()
 
-DBusGMainLoop(set_as_default=True)
-bus = dbus.SessionBus()
-name = dbus.service.BusName("com.n0madd3v0ps.soundtype", bus)
-service = SoundTypeService(bus, "/com/n0madd3v0ps/soundtype")
+def main():
+    global backend
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    name = dbus.service.BusName("com.n0madd3v0ps.soundtype", bus)
+    service = SoundTypeService(bus, "/com/n0madd3v0ps/soundtype")
 
-# Заглушаем pyotherside
-sys.modules['pyotherside'] = PyOtherSideMock(service)
+    # Заглушаем pyotherside
+    sys.modules['pyotherside'] = PyOtherSideMock(service)
 
-# Добавляем путь к питонячим исходникам SoundType
-sys.path.insert(0, '/home/phablet/soundtype/py')
-import backend
+    # Добавляем путь к питонячим исходникам SoundType
+    sys.path.insert(0, '/home/phablet/soundtype/py')
+    import backend
 
-print(f"SoundType D-Bus Daemon is running (lazy engine, idle unload {IDLE_UNLOAD_SECONDS}s)...", flush=True)
-loop = GLib.MainLoop()
-try:
-    loop.run()
-except KeyboardInterrupt:
-    pass
+    print(f"SoundType D-Bus Daemon is running (lazy engine, idle unload {IDLE_UNLOAD_SECONDS}s)...", flush=True)
+    loop = GLib.MainLoop()
+    try:
+        loop.run()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == '__main__':
+    main()
