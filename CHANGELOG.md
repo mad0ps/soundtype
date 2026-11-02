@@ -8,6 +8,11 @@
   the same text the app shows, so your text replacements (#8) now apply to
   keyboard dictation too. Re-run `extras/keyboard-integration/install.sh`
   to pick it up.
+* **Keyboard: Enter during dictation sends.** Pressing Enter while recording
+  stops it, inserts the final text and presses Enter — dictate a message and
+  send it in one tap. An empty result or an error presses nothing. The patch
+  now also covers `keys/ReturnKey.qml` (stock copy in `stock/`, restored by
+  `uninstall.sh`).
 
 ## 0.10.0 — text replacements & recognition-quality cleanup
 

@@ -59,6 +59,13 @@ Item {
     // SoundType: состояние диктовки (индикатор читает SpaceKey.qml)
     property string dictationStatus: "unloaded"
 
+    // Enter во время диктовки (ReturnKey.qml): стоп + итоговый текст + Enter.
+    // dictationStopping — стоп запросили мы и ждём итог; пока он идёт или
+    // идёт запись, Enter перехватывается.
+    property bool dictationStopping: false
+    property bool dictationEnterPending: false
+    property bool dictationEnterIntercept: dictationStatus === "recording" || dictationStopping
+
     // Живой уровень голоса (RMS ~8 Гц от демона) -> огибающая для баров:
     // перцептивная кривая (тихая речь уже заметна) + мгновенная атака,
     // плавный спад; Behavior растягивает шаги 125 мс в непрерывное движение.
@@ -107,7 +114,20 @@ Item {
             dictationEnvelope = 0.0;
             if (dictationStatus !== "processing") {
                 dictationWave = [];
+                dictationStopping = false;
             }
+        }
+    }
+
+    // Страховка: если итог так и не пришёл (демон упал посреди распознавания),
+    // Enter не должен остаться перехваченным. 200 с > таймаута декода (180 с).
+    Timer {
+        id: dictationEnterWatchdog
+        interval: 200000
+        running: fullScreenItem.dictationStopping || fullScreenItem.dictationEnterPending
+        onTriggered: {
+            fullScreenItem.dictationStopping = false;
+            fullScreenItem.dictationEnterPending = false;
         }
     }
 
@@ -579,7 +599,19 @@ Item {
     // SoundType: диктовка по hold-space. Живёт на постоянном слое клавиатуры,
     // поэтому не зависит от свайп-меню и переживает его открытие/закрытие.
     function toggleDictation() {
+        if (dictationStatus === "recording") {
+            dictationStopping = true;
+        }
         soundtypePython.call('soundtype_dbus_listener.toggle_dictation', []);
+    }
+
+    // Enter во время записи: стоп (если ещё не остановлено) и Enter после
+    // итогового текста. Повторный тап не перезапускает запись.
+    function dictationEnter() {
+        dictationEnterPending = true;
+        if (dictationStatus === "recording" && !dictationStopping) {
+            toggleDictation();
+        }
     }
 
     Python {
@@ -594,10 +626,22 @@ Item {
             });
             // Весь текст одним куском после стопа: уже склеенный и с
             // пользовательскими заменами (их получает только итоговый текст)
+            // Пустой итог или ошибка — Enter не жмём, чтобы не отправить
+            // то, что уже было в поле.
             setHandler('transcriptionReady', function(text) {
+                var enter = fullScreenItem.dictationEnterPending;
+                fullScreenItem.dictationStopping = false;
+                fullScreenItem.dictationEnterPending = false;
                 if (text !== "") {
                     event_handler.onKeyReleased(text);
+                    if (enter) {
+                        event_handler.onKeyReleased("", "return");
+                    }
                 }
+            });
+            setHandler('dictationError', function(message) {
+                fullScreenItem.dictationStopping = false;
+                fullScreenItem.dictationEnterPending = false;
             });
             importModule('soundtype_dbus_listener', function() {
                 soundtypePython.call('soundtype_dbus_listener.init', []);

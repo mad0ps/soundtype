@@ -18,9 +18,11 @@ mount -o remount,rw /
 # one-time stock backups (never overwritten on re-install)
 [ -f "$KB/Keyboard.qml.stock" ] || cp "$KB/Keyboard.qml" "$KB/Keyboard.qml.stock"
 [ -f "$KB/keys/SpaceKey.qml.stock" ] || cp "$KB/keys/SpaceKey.qml" "$KB/keys/SpaceKey.qml.stock"
+[ -f "$KB/keys/ReturnKey.qml.stock" ] || cp "$KB/keys/ReturnKey.qml" "$KB/keys/ReturnKey.qml.stock"
 
 install -m 644 "$DIR/patched/Keyboard.qml" "$KB/Keyboard.qml"
 install -m 644 "$DIR/patched/SpaceKey.qml" "$KB/keys/SpaceKey.qml"
+install -m 644 "$DIR/patched/ReturnKey.qml" "$KB/keys/ReturnKey.qml"
 
 [ -f "$KB/FloatingActions.qml.stock" ] || cp "$KB/FloatingActions.qml" "$KB/FloatingActions.qml.stock"
 install -m 644 "$DIR/patched/FloatingActions.qml" "$KB/FloatingActions.qml"

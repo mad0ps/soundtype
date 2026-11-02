@@ -21,11 +21,15 @@ Voice dictation built into the Lomiri system keyboard on Ubuntu Touch 24.04.
   SoundType daemon over D-Bus (`com.n0madd3v0ps.soundtype`).
 - The listener lives in `Keyboard.qml` (the keyboard's permanent layer), so
   insertion survives opening/closing the swipe menu.
+- Enter while recording stops it, inserts the final text and then presses
+  Enter (send). An empty result or an error presses nothing, so whatever was
+  already in the field is not sent by accident.
 
 ## Files
 
 - `patched/Keyboard.qml` — pyotherside D-Bus listener + whole-text insertion + dictation state
 - `patched/SpaceKey.qml` — hold-space gesture + tap-to-stop + mic indicator
+- `patched/ReturnKey.qml` — Enter during dictation = stop + insert the final text + Enter
 - `patched/FloatingActions.qml` — mic button in the swipe menu (uses the shared state)
 - `stock/` — pristine noble (24.04, lomiri-keyboard-data) copies for reference/revert
 - `install.sh` / `uninstall.sh` — run on the phone as root
