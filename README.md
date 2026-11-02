@@ -113,8 +113,8 @@ a mic button in the swipe menu, and a live indicator on the space bar.
 2. **The QML bridge**: `py/soundtype_dbus_listener.py` runs inside the
    keyboard via `io.thp.pyotherside` and relays daemon signals into QML.
 3. **Keyboard patches** (`Keyboard.qml`, `keys/SpaceKey.qml`,
-   `FloatingActions.qml`): the gesture, the "typewriter" (character-by-
-   character insertion through `event_handler.onKeyReleased`), the
+   `FloatingActions.qml`): the gesture, whole-text insertion of the final
+   result (one `event_handler.onKeyReleased` call after you stop), the
    voice-reactive indicator, the swipe-menu button.
 
 ### Installing:

@@ -89,9 +89,9 @@ plan.
       notification → "restore with one button"; level C (fully automatic via
       writable-paths) — after on-device verification, with strict
       self-checks (root-owned, immutable, hash manifest). (M)
-- [ ] Preedit instead of per-character commit (Maliit composing text):
-      partials shown as an underlined draft, commit on the final; the
-      per-character mode stays as a fallback setting. (M)
+- [ ] Preedit draft while speaking (Maliit composing text): partials
+      shown as an underlined draft, committed on the final; the plain
+      whole-text commit stays as a fallback setting. (M)
 
 ### Phase 4 — "People" (distribution)
 - [ ] **Unconfined + in-app integration installer** (the UT Tweak Tool
