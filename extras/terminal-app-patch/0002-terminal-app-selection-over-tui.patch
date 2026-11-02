@@ -1,0 +1,47 @@
+From 721dfb6b11aa3fde897b9bb6840da086ae62bd8b Mon Sep 17 00:00:00 2001
+From: mad0ps <n0madd3v0ps@gmail.com>
+Date: Mon, 2 Nov 2026 18:33:01 +0700
+Subject: [PATCH] Allow selection over TUI apps that capture the mouse
+
+QMLTermWidget builds a selection only when its _mouseMarks flag is true. In selection mode force it on via the (now writable) terminalUsesMouse property and restore it afterwards. Needs the qmltermwidget patch that adds WRITE setUsesMouse.
+---
+ app/qml/TerminalPage.qml | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/app/qml/TerminalPage.qml b/app/qml/TerminalPage.qml
+index 1ec5f6b..142e579 100644
+--- a/app/qml/TerminalPage.qml
++++ b/app/qml/TerminalPage.qml
+@@ -51,6 +51,29 @@ Page {
+         }
+     }
+ 
++    // While the running program has mouse reporting enabled, QMLTermWidget
++    // forwards pointer events to it and builds no selection of its own, so
++    // selection mode produced nothing and Copy stayed disabled.
++    //
++    // The widget selects only when its internal _mouseMarks flag is true.
++    // The terminalUsesMouse property is ASYMMETRIC: READ (getUsesMouse)
++    // returns !_mouseMarks, but WRITE (setUsesMouse) assigns _mouseMarks
++    // directly. So to force selection we WRITE true, and to save/restore the
++    // previous _mouseMarks we must invert the READ.
++    property var savedMouseMarks
++
++    onStateChanged: {
++        if (!terminal)
++            return;
++        if (state === "SELECTION") {
++            savedMouseMarks = !terminal.terminalUsesMouse; // = previous _mouseMarks
++            terminal.terminalUsesMouse = true;             // _mouseMarks = true -> selection
++        } else if (savedMouseMarks !== undefined) {
++            terminal.terminalUsesMouse = savedMouseMarks;  // restore previous _mouseMarks
++            savedMouseMarks = undefined;
++        }
++    }
++
+     // Leaving selection mode must not run inside the bottomMessage
+     // MouseArea: the SELECTION state keeps bottomMessage.active true, so
+     // resetting the state destroys the Loader item tree -- including this
+-- 
+2.39.5 (Apple Git-154)
+

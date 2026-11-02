@@ -13,6 +13,19 @@
   send it in one tap. An empty result or an error presses nothing. The patch
   now also covers `keys/ReturnKey.qml` (stock copy in `stock/`, restored by
   `uninstall.sh`).
+* **Terminal: dictation button** (`extras/terminal-app-patch/`, patch 0003): a
+  round mic button next to the Terminal's keyboard/Enter buttons; the round
+  Enter during dictation sends. The terminal starts recording with the new
+  daemon method `ToggleAppDictation` and gets the final text alone through
+  the new `AppTranscriptionReady` signal (the keyboard gets an empty
+  result), so the text is inserted exactly once whether the on-screen
+  keyboard is shown or not; whoever stops the recording gets the text. The
+  terminal talks to the daemon through `py/soundtype_app_bridge.py`, which
+  runs D-Bus on its own GLib context: with the shared listener the result
+  reached the terminal 16–37 s late, now in milliseconds. Restart the
+  daemon after updating. Patches rebased on upstream `main`; the
+  selection-mode crash fix is upstream now (MR !126), and 0002 carries the
+  corrected selection-over-TUI logic.
 
 ## 0.10.0 — text replacements & recognition-quality cleanup
 
