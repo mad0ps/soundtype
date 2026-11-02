@@ -16,14 +16,15 @@ Voice dictation built into the Lomiri system keyboard on Ubuntu Touch 24.04.
 - The daemon loads the engine lazily and unloads it after 5 idle minutes
   (override with the SOUNDTYPE_IDLE_UNLOAD env var, seconds): tens of MB
   idle instead of a resident ~1GB.
-- Recognized phrases are typed character by character ("typewriter") as they
-  arrive from the SoundType daemon over D-Bus (`com.n0madd3v0ps.soundtype`).
+- After you stop, the whole recognized text is inserted at once — already
+  glued and with your text replacements applied. It arrives from the
+  SoundType daemon over D-Bus (`com.n0madd3v0ps.soundtype`).
 - The listener lives in `Keyboard.qml` (the keyboard's permanent layer), so
-  typing survives opening/closing the swipe menu.
+  insertion survives opening/closing the swipe menu.
 
 ## Files
 
-- `patched/Keyboard.qml` — pyotherside D-Bus listener + typewriter + dictation state
+- `patched/Keyboard.qml` — pyotherside D-Bus listener + whole-text insertion + dictation state
 - `patched/SpaceKey.qml` — hold-space gesture + tap-to-stop + mic indicator
 - `patched/FloatingActions.qml` — mic button in the swipe menu (uses the shared state)
 - `stock/` — pristine noble (24.04, lomiri-keyboard-data) copies for reference/revert

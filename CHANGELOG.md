@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+* **Keyboard: whole-text insertion.** The keyboard no longer types phrases
+  character by character while you speak (the 18 ms-per-character
+  "typewriter"). After you stop, the final text is inserted in one go —
+  the same text the app shows, so your text replacements (#8) now apply to
+  keyboard dictation too. Re-run `extras/keyboard-integration/install.sh`
+  to pick it up.
+
 ## 0.10.0 — text replacements & recognition-quality cleanup
 
 * **Post-processing replacements (issue #8)**: a user glossary that rewrites

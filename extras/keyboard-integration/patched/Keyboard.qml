@@ -58,7 +58,6 @@ Item {
 
     // SoundType: состояние диктовки (индикатор читает SpaceKey.qml)
     property string dictationStatus: "unloaded"
-    property string dictationQueue: ""
 
     // Живой уровень голоса (RMS ~8 Гц от демона) -> огибающая для баров:
     // перцептивная кривая (тихая речь уже заметна) + мгновенная атака,
@@ -583,20 +582,6 @@ Item {
         soundtypePython.call('soundtype_dbus_listener.toggle_dictation', []);
     }
 
-    // «Машинистка»: печатаем распознанные фразы посимвольно, как живой набор
-    Timer {
-        id: dictationTypewriter
-        interval: 18
-        repeat: true
-        running: fullScreenItem.dictationQueue.length > 0
-        onTriggered: {
-            if (fullScreenItem.dictationQueue.length > 0) {
-                event_handler.onKeyReleased(fullScreenItem.dictationQueue.charAt(0));
-                fullScreenItem.dictationQueue = fullScreenItem.dictationQueue.substring(1);
-            }
-        }
-    }
-
     Python {
         id: soundtypePython
         Component.onCompleted: {
@@ -607,9 +592,11 @@ Item {
             setHandler('levelChanged', function(v) {
                 fullScreenItem.dictationOnLevel(v);
             });
-            setHandler('partialReady', function(text) {
+            // Весь текст одним куском после стопа: уже склеенный и с
+            // пользовательскими заменами (их получает только итоговый текст)
+            setHandler('transcriptionReady', function(text) {
                 if (text !== "") {
-                    fullScreenItem.dictationQueue += text;
+                    event_handler.onKeyReleased(text);
                 }
             });
             importModule('soundtype_dbus_listener', function() {
