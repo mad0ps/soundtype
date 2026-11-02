@@ -1,0 +1,159 @@
+From de4002eb956454954eaf06b648e1d6b4e0b1bdad Mon Sep 17 00:00:00 2001
+From: mad0ps <n0madd3v0ps@gmail.com>
+Date: Mon, 2 Nov 2026 18:33:35 +0700
+Subject: [PATCH] Add a SoundType dictation button next to keyboard/Enter
+
+Round mic button (shown only when the SoundType bridge loads) toggles dictation through the daemon's app method (ToggleAppDictation), so the final text comes back to the terminal alone (AppTranscriptionReady) and the terminal inserts it itself whether the on-screen keyboard is shown or not; the keyboard gets an empty result and inserts nothing. The bridge runs D-Bus on its own GLib main context, off the Qt event loop. The round Enter during dictation stops it and presses Enter after the text. Empty result or error presses nothing; 200 s watchdog.
+---
+ app/qml/TerminalPage.qml | 108 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 108 insertions(+)
+
+diff --git a/app/qml/TerminalPage.qml b/app/qml/TerminalPage.qml
+index 142e579..5c53958 100644
+--- a/app/qml/TerminalPage.qml
++++ b/app/qml/TerminalPage.qml
+@@ -22,6 +22,7 @@ import Lomiri.Components.Extras 0.3
+ import QMLTermWidget 1.0
+ import Terminal 0.1 //for FileIO
+ import GSettings 1.0
++import io.thp.pyotherside 1.5
+ 
+ // For FastBlur
+ import QtGraphicalEffects 1.0
+@@ -51,6 +52,89 @@ Page {
+         }
+     }
+ 
++    // SoundType dictation from the round button next to keyboard/Enter.
++    // Recording is toggled with the daemon's app method, so the final text
++    // comes back to the terminal alone (the keyboard gets an empty result)
++    // and the terminal inserts it itself, whether the on-screen keyboard is
++    // shown or not. Whoever stops the recording gets the text: stopped from
++    // the keyboard, the keyboard inserts it and we only reset our state.
++    // No SoundType installed -> the button stays hidden.
++    property bool dictationAvailable: false
++    property string dictationStatus: "unloaded"
++    property bool dictationStopping: false
++    property bool dictationEnterPending: false
++
++    function toggleDictation() {
++        if (dictationStatus === "recording")
++            dictationStopping = true;
++        soundtypePython.call('soundtype_app_bridge.toggle_dictation', []);
++    }
++
++    // Enter during dictation: stop (once) and press Enter after the text.
++    function dictationEnter() {
++        dictationEnterPending = true;
++        if (dictationStatus === "recording" && !dictationStopping)
++            toggleDictation();
++    }
++
++    function pressEnter() {
++        terminal.simulateKeyPress(Qt.Key_Enter, Qt.NoModifier, true, 0, "");
++    }
++
++    onDictationStatusChanged: {
++        if (dictationStatus !== "recording" && dictationStatus !== "processing")
++            dictationStopping = false;
++    }
++
++    Python {
++        id: soundtypePython
++        Component.onCompleted: {
++            addImportPath('/home/phablet/soundtype/py');
++            setHandler('statusChanged', function(status) {
++                terminalPage.dictationStatus = status;
++            });
++            setHandler('transcriptionReady', function(text) {
++                var enter = terminalPage.dictationEnterPending;
++                terminalPage.dictationStopping = false;
++                terminalPage.dictationEnterPending = false;
++                // Empty result: press nothing, do not send what is typed.
++                if (text === "" || !terminalPage.terminal)
++                    return;
++                console.log("SoundType: inserting " + text.length + " chars"
++                            + (enter ? " + Enter" : ""));
++                terminalPage.terminal.session.sendText(text);
++                if (enter)
++                    terminalPage.pressEnter();
++            });
++            // A recording stopped from the keyboard ended: the keyboard
++            // inserts that text, we must not keep Enter hijacked.
++            setHandler('sessionEnded', function(text) {
++                terminalPage.dictationStopping = false;
++                terminalPage.dictationEnterPending = false;
++            });
++            setHandler('dictationError', function(message) {
++                terminalPage.dictationStopping = false;
++                terminalPage.dictationEnterPending = false;
++            });
++            importModule('soundtype_app_bridge', function() {
++                soundtypePython.call('soundtype_app_bridge.init', [], function() {
++                    terminalPage.dictationAvailable = true;
++                });
++            });
++        }
++        onError: console.log("SoundType bridge unavailable: " + traceback)
++    }
++
++    // Safety net: if no result ever arrives, Enter must not stay hijacked.
++    Timer {
++        interval: 200000
++        running: terminalPage.dictationStopping || terminalPage.dictationEnterPending
++        onTriggered: {
++            terminalPage.dictationStopping = false;
++            terminalPage.dictationEnterPending = false;
++        }
++    }
++
+     // While the running program has mouse reporting enabled, QMLTermWidget
+     // forwards pointer events to it and builds no selection of its own, so
+     // selection mode produced nothing and Copy stayed disabled.
+@@ -367,12 +451,35 @@ Page {
+                 id: pressAction
+                 iconName: "keyboard-enter"
+                 onTriggered: {
++                    if (terminalPage.dictationStatus === "recording" || terminalPage.dictationStopping) {
++                        terminalPage.dictationEnter();
++                        return;
++                    }
+                     terminal.simulateKeyPress(Qt.Key_Enter, Qt.NoModifier, true, 0, "");
+                 }
+             }
+         }
+     }
+ 
++    Loader {
++        id: dictationButton
++        active: (!QuickUtils.keyboardAttached || lomiriSettings.alwaysShowOsk)
++                && terminalPage.dictationAvailable
++        anchors {right: returnButton.left; margins: units.gu(2)}
++        y: parent.height - height - units.gu(1) - keyboardBarLoader.height
++
++        sourceComponent: CircularTransparentButton {
++            backgroundColor: terminalPage.dictationStatus === "recording" ? "red"
++                           : terminalPage.dictationStatus === "processing" ? "gold"
++                           : tabsBar.color
++            iconColor: tabsBar.actionColor
++            action: Action {
++                iconName: "audio-input-microphone-symbolic"
++                onTriggered: terminalPage.toggleDictation()
++            }
++        }
++    }
++
+     state: "DEFAULT"
+     states: [
+         State {
+@@ -384,6 +491,7 @@ Page {
+             PropertyChanges { target: pageHeader; showActions: false }
+             PropertyChanges { target: keyboardButton; visible: false }
+             PropertyChanges { target: returnButton; visible: false }
++            PropertyChanges { target: dictationButton; visible: false }
+             PropertyChanges { target: bottomMessage; active: true }
+             PropertyChanges { target: keyboardBarLoader; enabled: false }
+         }
+-- 
+2.39.5 (Apple Git-154)
+

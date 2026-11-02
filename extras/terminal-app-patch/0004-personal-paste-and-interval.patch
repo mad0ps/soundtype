@@ -1,0 +1,51 @@
+From 343307573ee2973e966f483ac15616e52099ea6f Mon Sep 17 00:00:00 2001
+From: mad0ps <n0madd3v0ps@gmail.com>
+Date: Mon, 2 Nov 2026 18:33:54 +0700
+Subject: [PATCH] Personal: @paste key and 200 ms long-press
+
+The Termius-style keyboard layout sends "@paste" for its paste key: paste the clipboard instead of sending the literal text. Long-press 200 ms instead of upstream 400 ms (personal preference).
+---
+ app/qml/TerminalInputArea.qml | 6 ++----
+ app/qml/TerminalPage.qml      | 6 +++++-
+ 2 files changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/app/qml/TerminalInputArea.qml b/app/qml/TerminalInputArea.qml
+index 5f68b19..e8c05ef 100644
+--- a/app/qml/TerminalInputArea.qml
++++ b/app/qml/TerminalInputArea.qml
+@@ -82,13 +82,11 @@ Item {
+         anchors.fill: parent
+         z: parent.z + 0.01
+ 
+-        // 400 ms matches ExpandableButton.qml in this repo and the usual
+-        // Lomiri press-and-hold feel. Without an explicit interval the Timer
+-        // fell back to QML's implicit 1000 ms default, which felt sluggish.
++        // 200 ms — local personal preference (upstream uses 400 ms).
+         Timer {
+             id: pressAndHoldTimer
+             running: false
+-            interval: 400
++            interval: 200
+             onTriggered: {
+                 if (!parent.__moved)
+                     touchPressAndHold(singleTouchTouchArea.__pressPosition.x,
+diff --git a/app/qml/TerminalPage.qml b/app/qml/TerminalPage.qml
+index 5c53958..a1d61d1 100644
+--- a/app/qml/TerminalPage.qml
++++ b/app/qml/TerminalPage.qml
+@@ -384,7 +384,11 @@ Page {
+             backgroundColor: tabsBar.color
+             foregroundColor: tabsBar.foregroundColor
+             onSimulateKey: terminal.simulateKeyPress(key, mod, true, 0, "");
+-            onSimulateCommand: terminal.session.sendText(command);
++            // Кнопка "paste" из раскладки Termius шлёт строку "@paste":
++            // перехватываем и вставляем системный буфер, остальное — в сессию.
++            onSimulateCommand: (command === "@paste")
++                                   ? terminal.pasteClipboard()
++                                   : terminal.session.sendText(command);
+         }
+     }
+ 
+-- 
+2.39.5 (Apple Git-154)
+
